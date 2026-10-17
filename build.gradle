@@ -1,0 +1,23 @@
+buildscript {
+    repositories {
+        // maven.google.com 在本机不通；dl.google.com/dl/android/maven2 可达 → 用它当 google() 镜像
+        maven { url "https://dl.google.com/dl/android/maven2" }
+        mavenCentral()
+        google()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.13.2"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21"
+        // Kotlin 2.0 起 Compose 编译器独立成插件，必须与 kotlin-gradle-plugin 同版本
+        classpath "org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.0.21"
+    }
+}
+
+allprojects {
+    repositories {
+        maven { url "https://dl.google.com/dl/android/maven2" }
+        google()
+        mavenCentral()
+        maven { url "https://jitpack.io" }
+    }
+}

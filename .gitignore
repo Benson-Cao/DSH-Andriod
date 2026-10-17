@@ -1,0 +1,40 @@
+# ===== 构建产物 =====
+build/
+release/
+*.apk
+*.aab
+*.so
+.externalNativeBuild
+.cxx
+.gradle/
+.kotlin/
+out/
+
+# ===== dsh bundle（195MB 二进制，不进版本库）=====
+# 里面有 node 运行时 + 上百个 @deepseek-ai 包，随 dsh 发行版走。
+# 构建前需自行把 dsh-bundle.tar.gz 放到 app/src/main/assets/，
+# 或用 DSH_BUNDLE 环境变量指向本地路径。见 README「获取 dsh bundle」。
+app/src/main/assets/dsh-bundle.tar.gz
+app/src/main/assets/dsh-bundle.tar
+
+# ⚠️ bootstrap-*.zip 故意**不**忽略：native 构建需要它们，
+# 且每个约 29MB，均在 GitHub 单文件 100MB 限制内，是构建链的一部分。
+
+# ===== 本机配置（含绝对路径，绝不能提交）=====
+local.properties
+.gradle/
+*.jks
+!app/testkey_untrusted.jks
+keystore.properties
+
+# ===== IDE =====
+.idea/
+*.iml
+.vscode/
+
+# ===== 系统 =====
+.DS_Store
+Thumbs.db
+
+# ===== 临时脚本（本机调试用，不是工程一部分）=====
+TarTest*.java
