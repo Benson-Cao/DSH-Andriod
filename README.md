@@ -67,13 +67,18 @@ $HOME   = <filesDir>/home       dsh 入口 $HOME/node_modules/@deepseek-ai/dsh/l
 - Android SDK（`build-tools` / platform-tools）
 - `local.properties` 里写 `sdk.dir=/你的/AndroidSDK`
 
-### 依赖 dsh bundle（必需，不在仓库里）
-`app/src/main/assets/dsh-bundle.tar.gz` 是 195MB 的二进制（node 运行时 + 200+ 个 `@deepseek-ai` 包），
-**不纳入版本管理**。构建前放到该路径：
+### 依赖 dsh bundle（已纳入 Git LFS）
+`app/src/main/assets/dsh-bundle.tar.gz` 是 195MB 的二进制（node 运行时 + 200+ 个 `@deepseek-ai` 包）。
+它**通过 Git LFS 追踪**（见 `.gitattributes`），不在普通 git 对象里，所以仓库本身不会因它变胖。
+
+克隆后**必须**先装 LFS 才能拿到真实二进制，否则 checkout 到的只是一个指针文件（约几行文本），构建会失败：
 
 ```bash
-cp /path/to/dsh-bundle.tar.gz app/src/main/assets/
+git lfs install        # 一次性，给本机所有仓库启用 LFS
+git lfs pull           # 拉取真实 bundle（195MB）
 ```
+
+仅 `git clone` 而未 `git lfs pull` 时，该路径会是文本指针而非 tar.gz，构建会报找不到 node 运行时。
 
 ### 编译
 ```bash
