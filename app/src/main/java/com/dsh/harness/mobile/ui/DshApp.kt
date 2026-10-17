@@ -75,10 +75,12 @@ sealed interface Route {
     data object S23MarketInstalled : Route
     // API 密钥录入（S14 设置 → 模型 → API 密钥），写入 dsh credentials 存储
     data object S14ApiKey : Route
+    // v14 新增：本机 Termux 终端（入口挂 S4 侧栏与 S14 设置）
+    data object S27Termux : Route
 }
 
 /** 浮动层（Sheet），独立于路由栈 */
-private enum class SheetKind { None, Workspace, NewSession, More, Approval, Diagnostics, InstallConfirm }
+private enum class SheetKind { None, Workspace, NewSession, More, Approval, Diagnostics, InstallConfirm, Model }
 
 /**
  * 导航栈：从哪来回哪去。
@@ -133,6 +135,9 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     val tools by vm.tools.collectAsState()
     val sessions by vm.sessions.collectAsState()
     val models by vm.models.collectAsState()
+    val modelName by vm.modelName.collectAsState()
+    val thinking by vm.thinking.collectAsState()
+    val autoModel by vm.autoModel.collectAsState()
     val events by vm.events.collectAsState()
     val diagnostics by vm.diagnostics.collectAsState()
     val error by vm.error.collectAsState()
@@ -239,10 +244,13 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     Route.S3Home -> S3Home(
                         workspace = workspace?.let { it.substringAfterLast('/') } ?: "选择工作区",
                         workspaceChosen = workspace != null,
+                        modelName = modelName,
+                        thinking = thinking,
                         connectionReady = connection == DshViewModel.ClientPhase.Ready,
                         onOpenDrawer = { drawerOpen = true },
                         onPickWorkspace = { sheet = SheetKind.Workspace },
                         onPickMode = { sheet = SheetKind.NewSession },
+                        onPickModel = { sheet = SheetKind.Model },
                         onSend = { text ->
                             vm.send(text)
                             nav.go(Route.S5ChatRunning)
@@ -367,6 +375,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onAccount = { nav.go(Route.S15Account) },
                         apiKeyConfigured = apiKey.ok,
                         onApiKey = { nav.go(Route.S14ApiKey) },
+                        onTermux = { nav.go(Route.S27Termux) },
                     )
 
                     // —— API 密钥：写入 dsh 的 credentials 存储（$DSH_HOME/.credentials.yaml）——
@@ -380,6 +389,17 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     )
 
                     Route.S15Account -> S15Account(onBack = { nav.backOrHome() })
+
+                    Route.S27Termux -> S27Termux(
+                        onBack = { nav.backOrHome() },
+                        onOpenUi = { toast = "已在浏览器打开 dsh web（本机 3081）" },
+                        onStop = { toast = "服务已停止，会话日志保留" },
+                        onExportLog = { toast = vm.exportRedactedLog() },
+                        onCopyCommand = { cmd ->
+                            copyText(ctx, cmd)
+                            toast = "已复制 $cmd"
+                        },
+                    )
 
                     Route.S16Nas -> S16Nas(
                         onBack = { nav.backOrHome() },
@@ -461,7 +481,27 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     }
                 }
 
+                SheetKind.Model -> Unit
+
                 SheetKind.None -> Unit
+            }
+
+            // —— S29 模型选择器（点 S3 输入框右下角模型名唤起）——
+            if (sheet == SheetKind.Model) {
+                S29ModelSheet(
+                    visible = true,
+                    onDismiss = { sheet = SheetKind.None },
+                    selModelName = modelName,
+                    selThinking = thinking,
+                    autoOn = autoModel,
+                    onSelect = { name, t -> vm.setModelDisplay(name, t) },
+                    onAuto = { vm.setAutoModel(it) },
+                    onAccount = {
+                        sheet = SheetKind.None
+                        nav.go(Route.S15Account)
+                    },
+                    onDone = { sheet = SheetKind.None },
+                )
             }
 
             // —— 侧边栏：全局唯一一级入口 ——
@@ -474,6 +514,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 onWorkspace = { drawerOpen = false; nav.go(Route.S11Workspace) },
                 onSettings = { drawerOpen = false; nav.go(Route.S14Settings) },
                 onAccount = { drawerOpen = false; nav.go(Route.S15Account) },
+                onTermux = { drawerOpen = false; nav.go(Route.S27Termux) },
                 liveSessions = sessions,
             )
 

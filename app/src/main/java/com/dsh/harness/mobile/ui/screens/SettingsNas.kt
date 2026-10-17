@@ -46,6 +46,8 @@ fun S14Settings(
     /** 密钥是否已配置（只读存在性）。S14「模型」组的密钥状态点用它。 */
     apiKeyConfigured: Boolean = false,
     onApiKey: () -> Unit = {},
+    /** v14：本机 Termux 终端入口 */
+    onTermux: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var density by remember { mutableStateOf(1) }
@@ -146,6 +148,15 @@ fun S14Settings(
             SettingsGroup {
                 SettingRow("启用调试开关", "显示诊断页与端口状态") {
                     DshSwitch(devtools) { devtools = it }
+                }
+                DshDivider()
+                SettingRow(
+                    title = "本机服务 · Termux",
+                    subtitle = "在 Termux 里拉起 dsh web",
+                    icon = DshIcons.Terminal,
+                    onClick = onTermux,
+                ) {
+                    DshChip(":3081", tone = ChipTone.Ok, mini = true)
                 }
             }
 

@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -22,32 +23,36 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
 
 /**
- * S3 会话首页 · 对齐 Web 端
+ * S3 会话首页 · 对齐 Web 端（v15 重排）+ S28 未选工作区态（v16 新增）
  *
- * 设计稿骨架表原文：
- *   状态栏 5% ｜ 顶栏 6%(仅菜单 + 品牌字标，右侧不放按钮) ｜ 上留白 7%
- *   ｜ Hero 10%(探索未至之境 23px + 预览版 chip) ｜ 弹性 18%
- *   ｜ 工作区 + 模式行 5% ｜ 输入卡 15%(提示 3 行 + 工具行)
- *   ｜ 弹性 30% ｜ 边界脚注 3% ｜ home 4%
- *   "上下两段 flex 取 1 : 1.6，把输入框压到屏幕中线略偏下；
- *    无底部导航，输入卡是唯一的吸底元素"
+ * v15 把首页输入框改回 Web 同款排布：
+ *   - 工作区与模式从「居中胶囊」改为**输入框上方左对齐的文字下拉**
+ *     （默认工作区 ▾ / 标准模式 ▾），不再用胶囊底；
+ *   - 框内占位文案照抄 Web（"描述你想要构建的内容，/调用指令，@文件或对话"）；
+ *   - 底行「+ 工作区内修改 …… DeepSeek-V4-Flash High ▾ + 圆形发送键」；
+ *   - 模型全名与思考强度同行，点开进 S29 模型选择器。
  *
- * v7 修复记录：输入卡工具行原本需要 365px 而可用宽只有 317px，
- * 发送按钮被裁到卡片外 → 这里工具行允许换行，且发送按钮固定在末尾不被挤掉。
+ * v16 新增 S28：未选工作区时（workspaceChosen=false）输入框置灰、
+ * 显示"选择一个工作区开始"，只有选定目录后才能发任务（规则原样保留不放宽）。
+ *
+ * 骨架比例（设计稿 §03 规格）：
+ *   状态栏 5% ｜ 顶栏 6% ｜ 上留白 7% ｜ Hero 10% ｜ 弹性 18%
+ *   ｜ 工作区+模式行 5% ｜ 输入卡 15% ｜ 弹性 30% ｜ 边界脚注 3% ｜ home 4%
  */
 @Composable
 fun S3Home(
     modifier: Modifier = Modifier,
     workspace: String = "默认工作区",
-    workspaceIcon: androidx.compose.ui.graphics.vector.ImageVector = DshIcons.FolderOpen,
     mode: String = "标准模式",
-    model: String = "V4-Flash",
+    /** 输入框右下角模型名 + 思考强度（来自 VM，与 S29 共享） */
+    modelName: String = "DeepSeek-V4-Flash",
     thinking: String = "High",
     /** 工作区未选时输入禁用 —— 设计稿"规则原样保留不放宽" */
     workspaceChosen: Boolean = true,
@@ -56,6 +61,8 @@ fun S3Home(
     onOpenDrawer: () -> Unit,
     onPickWorkspace: () -> Unit,
     onPickMode: () -> Unit,
+    /** 点输入框右下角模型名 → 唤起 S29 模型选择器 */
+    onPickModel: () -> Unit = {},
     onSend: (String) -> Unit,
     /** 点顶栏状态 chip 时打开诊断（真实日志来自 ACP 客户端） */
     onShowDiagnostics: () -> Unit = {},
@@ -66,14 +73,12 @@ fun S3Home(
     DshScreen(modifier) {
         // —— 顶栏：仅 ☰ + 品牌字标，右侧不放按钮（设计稿明确）——
         DshNavBar(
-            // 一级页：没有来源页可回，必须显式声明（见 DshNavBar 的防御说明）
             noBackFor = "S3 首页（一级页，返回键由侧栏与硬件键承担）",
             leading = {
                 DshIBtn(DshIcons.Menu, "侧边栏", onClick = onOpenDrawer)
                 DshBrandmark()
             },
             actions = {
-                // 引擎状态：绿=已连接、琥珀=启动中、灰=未连接
                 val tone = when {
                     connectionReady -> ChipTone.Ok
                     else -> ChipTone.Neutral
@@ -83,7 +88,6 @@ fun S3Home(
                     workspaceChosen -> "引擎启动中"
                     else -> "未连接"
                 }
-                // 失败时点开能看到具体原因（否则只有一个"未连接"，无从排查）
                 DshChip(
                     label,
                     tone = tone,
@@ -99,102 +103,126 @@ fun S3Home(
                 .fillMaxWidth()
                 .padding(horizontal = Space.lg),
         ) {
-            Spacer(Modifier.height(56.dp))   // 上留白 7%
+            Spacer(Modifier.height(56.dp))
 
             // —— Hero：23px 标题 + 预览版 chip ——
             Column(
                 Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
-                    "探索未至之境",
-                    style = Type.hero,
-                    color = c.ink,
-                    textAlign = TextAlign.Center,
-                )
+                Text("探索未至之境", style = Type.hero, color = c.ink, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(9.dp))
                 DshChip("预览版", icon = DshIcons.Science, tone = ChipTone.Purple, mini = true)
             }
 
-            Spacer(Modifier.weight(1f))     // 弹性 18%
+            Spacer(Modifier.weight(1f))
 
-            // —— 工作区 + 模式行 ——
+            // —— 工作区 + 模式：v15 改回 Web 同款左对齐文字下拉 ——
             Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
+                Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                DshWsPill(
-                    label = workspace,
-                    icon = workspaceIcon,
-                    onClick = onPickWorkspace,
-                )
-                Spacer(Modifier.width(8.dp))
-                Row(
-                    Modifier
-                        .height(30.dp)
-                        .background(c.line2, RoundedCornerShape(14.dp))
-                        .clickable { onPickMode() }
-                        .padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(DshIcons.Build, null, Modifier.size(14.dp), tint = c.ink2)
-                    Text(mode, style = Type.chip, color = c.ink2)
+                if (workspaceChosen) {
+                    DshTextDropdown(
+                        text = workspace,
+                        icon = DshIcons.FolderOpen,
+                        onClick = onPickWorkspace,
+                    )
+                } else {
+                    // S28：未选时品牌色「选择工作区 ▾」
+                    DshTextDropdown(
+                        text = "选择工作区",
+                        icon = DshIcons.FolderOpen,
+                        brand = true,
+                        onClick = onPickWorkspace,
+                    )
                 }
+                DshTextDropdown(
+                    text = mode,
+                    onClick = onPickMode,
+                    enabled = workspaceChosen,
+                )
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(7.dp))
 
-            // —— 输入卡：唯一吸底元素，投影 0 6px 22px ——
+            // —— 输入卡：唯一吸底元素 ——
             Column(
                 Modifier
                     .fillMaxWidth()
                     .shadow(6.dp, RoundedCornerShape(Radius.xl), clip = false)
                     .background(c.card, RoundedCornerShape(Radius.xl))
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                    .alpha(if (workspaceChosen) 1f else 0.72f)
                     .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 11.dp),
             ) {
                 if (workspaceChosen) {
                     BasicTextInputCompat(
                         value = input,
                         onValueChange = { input = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 60.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
                     )
                 } else {
-                    // 未选工作区：输入禁用并给出去向提示
+                    // S28：未选工作区 → 置灰提示 + 约束条
                     Text(
-                        "先选择工作区，再描述你要构建的内容",
+                        "选择一个工作区开始",
                         style = Type.input,
                         color = c.ink3,
                         modifier = Modifier.heightIn(min = 60.dp),
                     )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Icon(
+                            DshIcons.ErrorOutline, null,
+                            Modifier.size(15.dp).padding(top = 2.dp),
+                            tint = c.warn,
+                        )
+                        Text(
+                            "Harness 必须以本地文件夹作为工作区才能读写文件与执行命令",
+                            style = Type.sec.copy(fontWeight = FontWeight.Medium, lineHeight = 18.sp),
+                            color = c.ink3,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(10.dp))
 
-                // —— 工具行：可换行，发送按钮永远在最后且不被挤掉 ——
+                // —— 工具行 ——
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    DshIBtn(DshIcons.AddCircleOutline, "添加附件", onClick = {})
-                    DshChip("工作区内修改")
+                    DshIBtn(
+                        DshIcons.AddCircleOutline, "添加附件",
+                        enabled = workspaceChosen,
+                        onClick = {},
+                    )
+                    DshTextDropdown(
+                        text = "工作区内修改",
+                        onClick = onPickMode,
+                        enabled = workspaceChosen,
+                    )
                     Spacer(Modifier.weight(1f))
+                    // 模型名 + 思考强度同行（点开进 S29）
                     Row(
                         Modifier
-                            .height(30.dp)
-                            .background(c.line2, RoundedCornerShape(14.dp))
-                            .clickable { }
-                            .padding(horizontal = 10.dp),
+                            .then(if (workspaceChosen) Modifier.clickable { onPickModel() } else Modifier)
+                            .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
-                        Text(model, style = Type.chip, color = c.ink2, maxLines = 1)
+                        Text(modelName, style = Type.chip, color = c.ink2, maxLines = 1)
                         Text(thinking, style = Type.meta, color = c.ink3)
+                        Icon(
+                            DshIcons.ExpandMore, null, Modifier.size(14.dp),
+                            tint = if (workspaceChosen) c.ink3 else c.ink3.copy(alpha = 0.45f),
+                        )
                     }
                     val canSend = workspaceChosen && input.isNotBlank() && connectionReady
                     DshIBtn(
@@ -208,26 +236,75 @@ fun S3Home(
                 }
             }
 
-            Spacer(Modifier.weight(1.6f))   // 弹性 30% —— 与上方 1 : 1.6
+            // S28：未选时输入框下方补一个主按钮，直达选择工作区 Sheet
+            if (!workspaceChosen) {
+                Spacer(Modifier.height(14.dp))
+                DshBtn(
+                    text = "选择一个工作区",
+                    icon = DshIcons.FolderOpen,
+                    onClick = onPickWorkspace,
+                )
+            }
 
-            // —— 边界脚注：把"工作区内才干活"这条规则常驻在屏上 ——
+            Spacer(Modifier.weight(1.6f))
+
+            // —— 边界脚注 ——
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 2.dp),
+                Modifier.fillMaxWidth().padding(bottom = 2.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(DshIcons.Lock, null, Modifier.size(13.dp), tint = c.ink3)
+                Icon(
+                    if (workspaceChosen) DshIcons.Lock else DshIcons.Info,
+                    null, Modifier.size(13.dp), tint = c.ink3,
+                )
                 Spacer(Modifier.width(5.dp))
                 Text(
-                    "所选工作区内的读写与命令 · 越界需经你确认",
+                    if (workspaceChosen)
+                        "所选工作区内的读写与命令 · 越界需经你确认"
+                    else
+                        "选定后，会话、读写与命令都限定在该目录内",
                     style = Type.meta,
                     color = c.ink3,
                     textAlign = TextAlign.Center,
                 )
             }
         }
+    }
+}
+
+/**
+ * v15 文字下拉：输入框上方的左对齐文字 + 尾箭头，无胶囊底。
+ * 用于工作区 / 模式 / 工作区内修改。品牌色用于未选工作区态的「选择工作区」。
+ */
+@Composable
+private fun DshTextDropdown(
+    text: String,
+    modifier: Modifier = Modifier,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    brand: Boolean = false,
+    enabled: Boolean = true,
+    onClick: (() -> Unit)? = null,
+) {
+    val c = DshTheme.colors
+    val fg = when {
+        !enabled -> c.ink3.copy(alpha = 0.45f)
+        brand -> c.brand
+        else -> c.ink2
+    }
+    Row(
+        modifier = modifier
+            .height(30.dp)
+            .then(if (onClick != null && enabled) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (icon != null) {
+            Icon(icon, null, Modifier.size(14.dp), tint = fg)
+        }
+        Text(text, style = Type.chip, color = fg, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        Icon(DshIcons.ExpandMore, null, Modifier.size(14.dp), tint = fg)
     }
 }
 
@@ -255,7 +332,6 @@ private fun BasicTextInputCompat(
         decorationBox = { inner ->
             Box {
                 if (value.isEmpty()) {
-                    // 用 AnnotatedString 保持「/」和「@」的品牌色，同时让它自然换行
                     Text(
                         text = buildAnnotatedString {
                             withStyle(SpanStyle(color = c.ink3)) { append("描述你想要构建的内容，") }
@@ -263,7 +339,6 @@ private fun BasicTextInputCompat(
                             withStyle(SpanStyle(color = c.ink3)) { append("调用指令，") }
                             withStyle(SpanStyle(color = c.brand, fontWeight = FontWeight.SemiBold)) { append("@") }
                             withStyle(SpanStyle(color = c.ink3)) { append("文件或对话") }
-                            // 光标占位：设计稿 .cur
                             withStyle(SpanStyle(color = c.brand)) { append("▎") }
                         },
                         style = Type.input,
@@ -459,4 +534,190 @@ fun BoxScope.S3EngineDiagnostics(
             }
         },
     )
+}
+
+// ============================ S29 模型选择器 ============================
+
+/**
+ * S29 模型选择器（v16 新增）
+ *
+ * 入口：S3 输入框右下角「DeepSeek-V4-Flash High ▾」。
+ * 设计稿结构：标题行(选择模型 + auto + 余额入口 + 关闭)
+ *   → DeepSeek 账号组(每行 Off/High/Max 分段，与模型名同行)
+ *   → 自定义提供方组(声明档位的给 "High ▾" 胶囊，未声明的给琥珀"未声明档位")
+ *   → auto 卡(开关) → 底部规则说明 → 完成按钮。
+ *
+ * 当前项标「当前」；思考强度与其同行，避免二级弹层。
+ * 模型名录按设计稿（含自定义提供方）为示意占位，与 S3 默认显示保持一致。
+ */
+private data class S29Model(
+    val name: String,
+    val desc: String,
+    /** 默认思考强度；null = 未声明推理等级（不提供档位） */
+    val thinking: String?,
+)
+
+@Composable
+fun BoxScope.S29ModelSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    selModelName: String,
+    selThinking: String,
+    autoOn: Boolean,
+    onSelect: (name: String, thinking: String) -> Unit,
+    onAuto: (Boolean) -> Unit,
+    onAccount: () -> Unit,
+    onDone: () -> Unit,
+) {
+    val c = DshTheme.colors
+    val levels = listOf("Off", "High", "Max")
+
+    val deepseek = listOf(
+        S29Model("DeepSeek-V4-Flash", "快 · 适合日常任务与长上下文缓存", "High"),
+        S29Model("DeepSeek-V4-Pro", "强推理 · 复杂改造与长任务", "Max"),
+    )
+    val custom = listOf(
+        S29Model("qwen3.7-max", "bailian · openai-completions", "High"),
+        S29Model("minimax-m3", "bailian · 目录内", "High"),
+        S29Model("Tencent TokenPlan · auto", "tencent · 套餐内自动路由", null),
+    )
+
+    DshSheet(
+        visible = visible,
+        onDismiss = onDismiss,
+        header = {
+            DshSheetHeader(
+                title = "选择模型",
+                trailing = {
+                    DshChip(
+                        if (autoOn) "auto · 开" else "auto",
+                        tone = if (autoOn) ChipTone.Brand else ChipTone.Neutral,
+                        mini = true,
+                        onClick = { onAuto(!autoOn) },
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    DshIBtn(DshIcons.AccountBalanceWallet, "账号与余额", onClick = onAccount)
+                    Spacer(Modifier.width(2.dp))
+                    DshIBtn(DshIcons.Close, "关闭", onClick = onDismiss)
+                },
+            )
+        },
+        content = {
+            DshSecTitle("DeepSeek 账号", note = "用余额计费")
+            S29GroupCard {
+                deepseek.forEachIndexed { i, m ->
+                    if (i > 0) DshDivider()
+                    S29ModelRow(
+                        model = m,
+                        current = m.name == selModelName,
+                        rowThinking = if (m.name == selModelName) selThinking else (m.thinking ?: "High"),
+                        onSelect = onSelect,
+                    )
+                }
+            }
+
+            DshSecTitle("自定义提供方")
+            S29GroupCard {
+                custom.forEachIndexed { i, m ->
+                    if (i > 0) DshDivider()
+                    S29ModelRow(
+                        model = m,
+                        current = m.name == selModelName,
+                        rowThinking = if (m.name == selModelName) selThinking else (m.thinking ?: "High"),
+                        onSelect = onSelect,
+                    )
+                }
+            }
+
+            // —— auto 卡 ——
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(c.soft)
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                Icon(DshIcons.AutoAwesome, null, Modifier.size(16.dp), tint = c.brand)
+                Column(Modifier.weight(1f)) {
+                    Text("auto", style = Type.rowTitle, color = c.ink)
+                    Text(
+                        "由 Harness 按任务挑模型，跨提供方可用",
+                        style = Type.sec.copy(lineHeight = 15.sp),
+                        color = c.ink2,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                DshSwitch(autoOn) { onAuto(it) }
+            }
+
+            Text(
+                "手动录入的模型在声明推理等级前不会出现在档位菜单里，是否思考由服务端默认行为决定；可在 设置 → 模型 → 编辑提供方 → 自定义设置 → 模型选项 → 推理等级 配置。切换模型只影响后续轮次，进行中的任务不会被搬走。",
+                style = Type.meta.copy(lineHeight = 17.6.sp),
+                color = c.ink3,
+                modifier = Modifier.padding(top = 11.dp),
+            )
+        },
+        footer = {
+            DshBtn("完成", tone = BtnTone.Ghost, onClick = onDone)
+        },
+    )
+}
+
+/** S29 分组卡容器（圆角描边，行内可滚动） */
+@Composable
+private fun S29GroupCard(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(DshTheme.colors.card)
+            .border(1.dp, DshTheme.colors.line, RoundedCornerShape(Radius.xl)),
+        content = content,
+    )
+}
+
+/** S29 单行：模型名 +「当前」标 + 思考强度（段控件或档位胶囊 / 未声明档位） */
+@Composable
+private fun S29ModelRow(
+    model: S29Model,
+    current: Boolean,
+    rowThinking: String,
+    onSelect: (name: String, thinking: String) -> Unit,
+) {
+    val c = DshTheme.colors
+    val levels = listOf("Off", "High", "Max")
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(model.name, model.thinking ?: "High") }
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(model.name, style = Type.rowTitle, color = c.ink, maxLines = 1, fontWeight = FontWeight.SemiBold)
+            if (current) {
+                Spacer(Modifier.width(5.dp))
+                DshChip("当前", tone = ChipTone.Brand, mini = true)
+            }
+            Spacer(Modifier.weight(1f))
+            if (model.thinking != null) {
+                // 已声明推理等级：Off/High/Max 段控件与模型名同行
+                DshSeg(
+                    options = levels,
+                    selectedIndex = levels.indexOf(rowThinking).coerceAtLeast(0),
+                    modifier = Modifier.width(120.dp),
+                    onSelect = { onSelect(model.name, levels[it]) },
+                )
+            } else {
+                // 未声明推理等级：琥珀标签，不提供档位
+                DshChip("未声明档位", tone = ChipTone.Warn, mini = true)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(model.desc, style = Type.sec, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
 }

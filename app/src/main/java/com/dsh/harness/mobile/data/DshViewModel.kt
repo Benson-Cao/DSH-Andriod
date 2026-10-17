@@ -92,6 +92,25 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
     private val _models = MutableStateFlow<List<ModelOption>>(emptyList())
     val models: StateFlow<List<ModelOption>> = _models
 
+    /**
+     * S3 输入框右下角 / S29 模型选择器共享的"当前模型 + 思考强度"显示态。
+     * 真实引擎连上时，`selectModel`/`selectThinking` 也会回写这里，
+     * 让首页那行"DeepSeek-V4-Flash High ▾"始终反映最新选择。
+     */
+    private val _modelName = MutableStateFlow("DeepSeek-V4-Flash")
+    val modelName: StateFlow<String> = _modelName
+    private val _thinking = MutableStateFlow("High")
+    val thinking: StateFlow<String> = _thinking
+    private val _autoModel = MutableStateFlow(false)
+    val autoModel: StateFlow<Boolean> = _autoModel
+
+    /** S29：单纯更新显示态（含自定义提供方等占位模型，不下发到真实引擎） */
+    fun setModelDisplay(name: String, thinking: String) {
+        _modelName.value = name
+        _thinking.value = thinking
+    }
+    fun setAutoModel(on: Boolean) { _autoModel.value = on }
+
     private val _busy = MutableStateFlow(false)
     /** 运行中：对应 S5 的"执行中 · 第 N 步"与停止/排队条 */
     val busy: StateFlow<Boolean> = _busy
@@ -275,8 +294,10 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** S9 切换模型 */
+    /** S9 切换模型（真实引擎）；同步回写显示态让首页那行模型名跟着变 */
     fun selectModel(optionValue: String) {
+        val opt = _models.value.firstOrNull { it.value == optionValue }
+        if (opt != null) _modelName.value = opt.name
         viewModelScope.launch { client.setConfigOption("model", optionValue) }
     }
 
@@ -316,8 +337,9 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** S9 切换思考强度 */
+    /** S9 切换思考强度（真实引擎）；同步回写显示态 */
     fun selectThinking(value: String) {
+        _thinking.value = value
         viewModelScope.launch { client.setConfigOption("reasoning_effort", value) }
     }
 

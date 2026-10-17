@@ -47,6 +47,8 @@ fun BoxScope.S4Drawer(
     onWorkspace: () -> Unit,
     onSettings: () -> Unit,
     onAccount: () -> Unit,
+    /** v14：本机 Termux 终端入口 */
+    onTermux: () -> Unit = {},
     modifier: Modifier = Modifier,
     selectedNav: Int = 0,
     /** 来自 ACP session/list 的真实会话；为空时退回设计稿演示数据 */
@@ -173,6 +175,14 @@ fun BoxScope.S4Drawer(
                 Spacer(Modifier.weight(1f))
                 Text("¥4.08", style = Type.meta.copy(fontSize = 10.5.sp), color = c.ink3)
             }
+
+            NavRow(
+                title = "本机服务 · Termux",
+                icon = DshIcons.Terminal,
+                selected = selectedNav == 4,
+                badge = "运行中",
+                onClick = onTermux,
+            )
 
             NavRow(
                 title = "设置",
