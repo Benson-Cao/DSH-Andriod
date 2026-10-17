@@ -27,6 +27,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import com.dsh.harness.mobile.data.DshEnvProbe
 import com.dsh.harness.mobile.data.DshPluginCatalog
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
@@ -1187,12 +1189,19 @@ fun S23MarketInstalled(
     val c = DshTheme.colors
     val updatable = installed.count { it.version.isNotEmpty() }
 
+    // 运行环境自检：真实数据（DshEnvProbe），点行展开明细；「同步」按钮重跑
+    val appCtx = LocalContext.current.applicationContext
+    var envReport by remember { mutableStateOf<DshEnvProbe.Report?>(null) }
+    var envOpen by remember { mutableStateOf(false) }
+    var envRun by remember { mutableIntStateOf(0) }
+    LaunchedEffect(envRun) { envReport = DshEnvProbe.probe(appCtx) }
+
     DshScreen(modifier, bottomBar = false) {
         DshNavBar(
             onBack = onBack,
             title = "已安装",
             stacked = true,
-            actions = { DshIBtn(DshIcons.Sync, "同步", onClick = {}) },
+            actions = { DshIBtn(DshIcons.Sync, "重跑自检", onClick = { envRun++; envOpen = false }) },
         )
 
         Column(
@@ -1276,36 +1285,82 @@ fun S23MarketInstalled(
             }
             Spacer(Modifier.height(11.dp))
 
-            // 备份警示
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.warnSoft())
-                    .border(1.dp, c.warn.copy(alpha = 0.28f), RoundedCornerShape(Radius.xl))
-                    .padding(13.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(DshIcons.Warning, null, Modifier.size(18.dp), tint = c.warn)
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "全部更新前建议先备份配置目录：新版本可能改配置格式，导致启动时解析失败。",
-                    style = Type.meta,
-                    color = c.ink2,
-                    lineHeight = 17.sp,
-                )
+            // 备份警示：0 已装时没有"全部更新"这个动作，警示无意义 → 不显示
+            if (installed.isNotEmpty()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.warnSoft())
+                        .border(1.dp, c.warn.copy(alpha = 0.28f), RoundedCornerShape(Radius.xl))
+                        .padding(13.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(DshIcons.Warning, null, Modifier.size(18.dp), tint = c.warn)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "全部更新前建议先备份配置目录：新版本可能改配置格式，导致启动时解析失败。",
+                        style = Type.meta,
+                        color = c.ink2,
+                        lineHeight = 17.sp,
+                    )
+                }
+                Spacer(Modifier.height(11.dp))
             }
-            Spacer(Modifier.height(11.dp))
 
             PlugCard {
+                // 自检数据是真跑出来的（DshEnvProbe）：node / dsh 主程序 / home / API 密钥
+                val report = envReport
                 DshMRow(
                     title = "运行环境自检",
-                    subtitle = "缺 pnpm 等依赖可自动发现并一键配置",
+                    subtitle = "node · dsh 主程序 · API 密钥 · 本机真实检测",
                     icon = DshIcons.Terminal,
                     iconTone = ChipTone.Neutral,
-                    trailing = { DshChip("1 项待修", tone = ChipTone.Warn, mini = true) },
-                    onClick = {},
+                    trailing = {
+                        when {
+                            report == null -> DshChip("检测中", tone = ChipTone.Neutral, mini = true)
+                            report.allOk -> DshChip("正常", tone = ChipTone.Ok, mini = true)
+                            else -> DshChip("${report.missing} 项待修", tone = ChipTone.Warn, mini = true)
+                        }
+                    },
+                    onClick = { if (report != null) envOpen = !envOpen },
                 )
+                AnimatedVisibility(visible = envOpen && report != null) {
+                    Column(Modifier.padding(top = 2.dp)) {
+                        report!!.checks.forEachIndexed { i, chk ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 13.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    if (chk.ok) DshIcons.CheckCircle else DshIcons.Warning,
+                                    null,
+                                    Modifier.size(15.dp),
+                                    tint = if (chk.ok) c.ok else c.warn,
+                                )
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(chk.name, style = Type.rowTitle, color = c.ink)
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        chk.detail,
+                                        style = Type.meta.copy(fontSize = 10.5.sp),
+                                        color = c.ink3,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                if (!chk.ok) {
+                                    Spacer(Modifier.width(8.dp))
+                                    DshChip("缺失", tone = ChipTone.Warn, mini = true)
+                                }
+                            }
+                            if (i != report.checks.lastIndex) DshDivider()
+                        }
+                    }
+                }
                 DshDivider()
                 DshMRow(
                     title = "导出脱敏日志",
