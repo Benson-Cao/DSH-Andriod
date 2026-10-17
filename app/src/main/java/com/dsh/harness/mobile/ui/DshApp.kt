@@ -24,10 +24,14 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dsh.harness.mobile.data.DshMarketProbe
+import com.dsh.harness.mobile.data.DshPrefs
 import com.dsh.harness.mobile.data.DshViewModel
 import com.dsh.harness.mobile.ui.screens.*
 import com.dsh.harness.mobile.ui.theme.DshTheme
 import com.dsh.harness.mobile.ui.theme.Motion
+import android.content.ClipboardManager
+import android.content.ClipData
+import android.content.Context
 
 /**
  * App 根：把 18 屏串成一条可点击的完整链路。
@@ -40,7 +44,9 @@ import com.dsh.harness.mobile.ui.theme.Motion
  * 省一个依赖及其版本地狱；且能精确控制"从哪来回哪去"（见 NavState 注释）。
  */
 sealed interface Route {
-    // 一次性向导
+    // 一次性向导（v13 §01 首次配置：S24 填密钥 → 可选 S25 → S1 用途 → S2 密度 → S3）
+    data object S24FirstKey : Route
+    data object S25Provider : Route
     data object S1Purpose : Route
     data object S2Density : Route
 
@@ -145,6 +151,19 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     val marketPlugins = remember { emptyList<MarketPlugin>() }
     val marketInstalledPlugins = remember { emptyList<MarketPlugin>() }
 
+    // 首启动：没走过引导且没配密钥 → 进 S24 首次配置（在副作用里改路由，不在组合期）
+    LaunchedEffect(startRoute, apiKey.configured) {
+        if (startRoute == Route.S3Home && !DshPrefs.onboarded(ctx) && !apiKey.configured) {
+            nav.replace(Route.S24FirstKey)
+        }
+    }
+
+    /** 全局复制助手（开放平台链接等） */
+    fun copyText(c: Context, text: String) {
+        val cm = c.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        cm?.setPrimaryClip(ClipData.newPlainText("dsh", text))
+    }
+
     // S22 的安装确认 Sheet 要盖在详情页上，所以目标插件存在 state 里
     var installTarget by remember { mutableStateOf<MarketPlugin?>(null) }
 
@@ -181,15 +200,40 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 label = "route",
             ) { r ->
                 when (r) {
+                    Route.S24FirstKey -> S24OnboardingKey(
+                        onNext = { nav.go(Route.S1Purpose) },
+                        onUseBalance = { nav.go(Route.S1Purpose) },
+                        onAddProvider = { nav.go(Route.S25Provider) },
+                        onToggleDark = { dark = !dark },
+                        onCopyPlatform = {
+                            copyText(ctx, "platform.deepseek.com")
+                            toast = "已复制 platform.deepseek.com"
+                        },
+                        state = apiKey,
+                        onSave = { vm.saveApiKey(it) },
+                    )
+
+                    Route.S25Provider -> S25Provider(
+                        onBack = { nav.go(Route.S24FirstKey) },
+                        onCancel = { nav.go(Route.S24FirstKey) },
+                        onCreated = { nav.go(Route.S1Purpose) },
+                    )
+
                     Route.S1Purpose -> S1OnboardingPurpose(
-                        onBack = { nav.backOrHome() },
+                        onBack = { nav.go(Route.S24FirstKey) },
                         onNext = { nav.go(Route.S2Density) },
                     )
 
                     Route.S2Density -> S2OnboardingDensity(
                         onBack = { nav.go(Route.S1Purpose) },
-                        onSkip = { nav.replace(Route.S3Home) },
-                        onEnter = { nav.replace(Route.S3Home) },
+                        onSkip = {
+                            DshPrefs.setOnboarded(ctx)
+                            nav.replace(Route.S3Home)
+                        },
+                        onEnter = {
+                            DshPrefs.setOnboarded(ctx)
+                            nav.replace(Route.S3Home)
+                        },
                     )
 
                     Route.S3Home -> S3Home(
@@ -213,6 +257,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         userText = messages.firstOrNull { it.role == DshViewModel.Role.User }?.text.orEmpty(),
                         liveMessages = messages,
                         liveTools = tools,
+                        events = events,
                         onBack = { nav.backOrHome() },
                         running = busy,
                         contextUsage = contextUsage,
@@ -231,12 +276,15 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onOpenWorkspace = { nav.go(Route.S11Workspace) },
                         onPreview = {},
                         onShare = {},
+                        events = events,
+                        onOpenTrajectory = { nav.go(Route.S8Trajectory) },
                     )
 
                     Route.S8Trajectory -> S8Trajectory(
                         onBack = { nav.backOrHome() },
                         events = events,
                         protocolLog = diagnostics,
+                        onExport = { toast = vm.exportRedactedLog() },
                     )
 
                     Route.S10Command -> S10CommandPanel(

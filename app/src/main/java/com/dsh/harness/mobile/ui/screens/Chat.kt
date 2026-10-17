@@ -133,7 +133,7 @@ fun DshSpinner(modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp 
     }
 }
 
-/** 工具调用行：状态图标 + mono 工具名 + 参数 + 耗时 */
+/** 工具调用行：状态图标 + 记录类型标签 + mono 工具名 + 参数 + 耗时 + 查看 */
 @Composable
 fun DshToolRow(
     tool: String,
@@ -141,6 +141,10 @@ fun DshToolRow(
     status: ToolStatus,
     cost: String,
     modifier: Modifier = Modifier,
+    /** 记录类型标签：工具 / 子工具（v13） */
+    kindLabel: String? = null,
+    /** 点击「查看」跳轨迹并定位该记录（v13） */
+    onView: (() -> Unit)? = null,
 ) {
     val c = DshTheme.colors
     val active = status == ToolStatus.Running
@@ -163,6 +167,9 @@ fun DshToolRow(
             ToolStatus.Fail -> Icon(DshIcons.ErrorOutline, null, Modifier.size(15.dp), tint = c.danger)
             ToolStatus.Wait -> Icon(DshIcons.Lock, null, Modifier.size(15.dp), tint = c.warn)
         }
+        if (kindLabel != null) {
+            DshChip(kindLabel, tone = if (kindLabel == "子工具") ChipTone.Purple else ChipTone.Ok, mini = true)
+        }
         Text(
             tool,
             style = Type.mono,
@@ -177,12 +184,22 @@ fun DshToolRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        Text(
-            cost,
-            style = Type.meta.copy(fontSize = 10.5.sp),
-            color = c.ink3,
-            fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.Normal else androidx.compose.ui.text.font.FontWeight.SemiBold,
-        )
+        if (cost.isNotEmpty()) {
+            Text(
+                cost,
+                style = Type.meta.copy(fontSize = 10.5.sp),
+                color = c.ink3,
+                fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.Normal else androidx.compose.ui.text.font.FontWeight.SemiBold,
+            )
+        }
+        if (onView != null) {
+            Text(
+                "查看",
+                style = Type.meta.copy(fontSize = 10.5.sp),
+                color = c.brand,
+                modifier = Modifier.clickable { onView() },
+            )
+        }
     }
 }
 
@@ -253,6 +270,8 @@ fun S5ChatRunning(
     /** 来自 ACP 的实时消息流；为空时退回设计稿演示数据 */
     liveMessages: List<com.dsh.harness.mobile.data.DshViewModel.ChatMessage> = emptyList(),
     liveTools: List<com.dsh.harness.mobile.data.DshViewModel.ToolCall> = emptyList(),
+    /** v13 轨迹账本：对话/轨迹标签的「轨迹」态复用 */
+    events: List<TrajectoryEvent> = emptyList(),
     showApproval: Boolean = false,
     /** 返回上一级（由 App 层的 NavState 决定从哪来回哪去） */
     onBack: () -> Unit,
@@ -271,6 +290,8 @@ fun S5ChatRunning(
     var input by remember { mutableStateOf("") }
     val listState = rememberScrollState()
     val hasLive = liveMessages.isNotEmpty()
+    // v13：顶部「对话 / 轨迹」并列标签
+    var tab by remember { mutableStateOf(0) }
 
     DshScreen(modifier) {
         // —— 会话头：标题 + 状态点 + 模式·权限 + 更多 ——
@@ -292,86 +313,126 @@ fun S5ChatRunning(
             },
         )
 
+        // —— v13 顶部「对话 / 轨迹」并列标签（默认对话）——
+        Column(Modifier.padding(horizontal = Space.lg).padding(top = 10.dp)) {
+            DshTabs(listOf("对话", "轨迹"), tab) { tab = it }
+        }
+
         // —— 消息区 ——
         Column(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .verticalScroll(listState)
-                .padding(horizontal = Space.lg),
+                .padding(horizontal = Space.lg)
+                .padding(top = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Spacer(Modifier.height(4.dp))
+            when (tab) {
+                // —— 对话态：消息 + 工具调用组 ——
+                0 -> {
+                    Spacer(Modifier.height(4.dp))
 
-            // 有真实会话时渲染 ACP 推来的消息，否则退回设计稿演示数据
-            if (hasLive) {
-                liveMessages.forEach { m ->
-                    when (m.role) {
-                        com.dsh.harness.mobile.data.DshViewModel.Role.User ->
-                            DshUserBubble(m.text)
+                    // 有真实会话时渲染 ACP 推来的消息，否则退回设计稿演示数据
+                    if (hasLive) {
+                        liveMessages.forEach { m ->
+                            when (m.role) {
+                                com.dsh.harness.mobile.data.DshViewModel.Role.User ->
+                                    DshUserBubble(m.text)
 
-                        com.dsh.harness.mobile.data.DshViewModel.Role.Thought ->
-                            DshFold(
-                                title = "已思考",
-                                detail = m.text,
-                                icon = DshIcons.Psychology,
-                                initiallyOpen = false,
-                            )
+                                com.dsh.harness.mobile.data.DshViewModel.Role.Thought ->
+                                    DshFold(
+                                        title = "已思考",
+                                        detail = m.text,
+                                        icon = DshIcons.Psychology,
+                                        initiallyOpen = false,
+                                    )
 
-                        com.dsh.harness.mobile.data.DshViewModel.Role.Assistant ->
-                            DshAnswerText(m.text)
-                    }
-                }
-            } else {
-                DshUserBubble(userText)
+                                com.dsh.harness.mobile.data.DshViewModel.Role.Assistant ->
+                                    DshAnswerText(m.text)
+                            }
+                        }
+                    } else {
+                        DshUserBubble(userText)
 
-                DshFold(
-                    title = "已思考 · 2.4s",
-                    detail = "表头有 8 行数据落在版心外，先确认列口径再套模板。" +
-                        "同比需要去年同期列，文件里没有，走 web_search 补一份公开口径并标注来源。",
-                    icon = DshIcons.Psychology,
-                )
-
-                DshAnswerText("好的，我按部门维度汇总，先读表结构再生成幻灯片。")
-            }
-
-            // —— 工具调用组（有实时数据就渲染实时，否则演示）——
-            if (liveTools.isNotEmpty()) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.card)
-                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                ) {
-                    Text(
-                        "工具调用 · ${liveTools.size}",
-                        style = Type.chip.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
-                        color = c.ink,
-                        modifier = Modifier.padding(bottom = 6.dp),
-                    )
-                    liveTools.forEach { t ->
-                        DshToolRow(
-                            tool = t.name,
-                            arg = t.detail,
-                            status = when (t.status) {
-                                com.dsh.harness.mobile.data.DshViewModel.Status.Running -> ToolStatus.Running
-                                com.dsh.harness.mobile.data.DshViewModel.Status.Done -> ToolStatus.Done
-                                com.dsh.harness.mobile.data.DshViewModel.Status.Fail -> ToolStatus.Fail
-                                com.dsh.harness.mobile.data.DshViewModel.Status.Wait -> ToolStatus.Wait
-                            },
-                            cost = t.cost,
+                        DshFold(
+                            title = "已思考 · 2.4s",
+                            detail = "表头有 8 行数据落在版心外，先确认列口径再套模板。" +
+                                "同比需要去年同期列，文件里没有，走 web_search 补一份公开口径并标注来源。",
+                            icon = DshIcons.Psychology,
                         )
+
+                        DshAnswerText("好的，我按部门维度汇总，先读表结构再生成幻灯片。")
                     }
+
+                    // —— 工具调用组（有实时数据就渲染实时，否则演示）——
+                    if (liveTools.isNotEmpty()) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(Radius.xl))
+                                .background(c.card)
+                                .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                        ) {
+                            Text(
+                                "工具调用 · ${liveTools.size}",
+                                style = Type.chip.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                                color = c.ink,
+                                modifier = Modifier.padding(bottom = 6.dp),
+                            )
+                            liveTools.forEach { t ->
+                                DshToolRow(
+                                    tool = t.name,
+                                    arg = t.detail,
+                                    status = when (t.status) {
+                                        com.dsh.harness.mobile.data.DshViewModel.Status.Running -> ToolStatus.Running
+                                        com.dsh.harness.mobile.data.DshViewModel.Status.Done -> ToolStatus.Done
+                                        com.dsh.harness.mobile.data.DshViewModel.Status.Fail -> ToolStatus.Fail
+                                        com.dsh.harness.mobile.data.DshViewModel.Status.Wait -> ToolStatus.Wait
+                                    },
+                                    cost = t.cost,
+                                    kindLabel = if (t.name.contains("subagent", ignoreCase = true)) "子工具" else "工具",
+                                    onView = onOpenTrajectory,
+                                )
+                            }
+                        }
+                    }
+
+                    // ⚠️ 子代理与后台任务：ACP **没有**对应事件类型
+                    //（协议表里只有 user/agent message、thought、tool_call、usage、config）。
+                    // 所以这两块不再展示设计稿演示数据，等接上能力再开。
+
+                    Spacer(Modifier.height(4.dp))
+                }
+
+                // —— 轨迹态：预览账本 + 打开轨迹 ——
+                else -> {
+                    Spacer(Modifier.height(28.dp))
+                    Text(
+                        "轨迹视图按「第 N 轮」展开账本与时间概览。",
+                        style = Type.sec.copy(lineHeight = 19.sp), color = c.ink3,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    DshBtn(
+                        "打开轨迹",
+                        small = true,
+                        tone = BtnTone.Ghost,
+                        onClick = onOpenTrajectory,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "看不到「轨迹」标签时：设置 → 通用设置 → 打开「显示代码工作视图」。引导里选「办公与创作」或跳过引导的用户，默认不带这个标签。",
+                        style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp), color = c.ink3,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.md))
+                            .background(c.soft)
+                            .padding(10.dp),
+                    )
                 }
             }
-
-            // ⚠️ 子代理与后台任务：ACP **没有**对应事件类型
-            //（协议表里只有 user/agent message、thought、tool_call、usage、config）。
-            // 所以这两块不再展示设计稿演示数据，等接上能力再开。
-
-            Spacer(Modifier.height(4.dp))
         }
 
         // —— 介入条：停止 / 排队 / 中途引导 + 上下文占用（吸底第一层）——

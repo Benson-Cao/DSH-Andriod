@@ -79,6 +79,10 @@ object DshIcons {
     val VpnKey = Icons.Filled.VpnKey
     val Smartphone = Icons.Filled.Smartphone
     val AccountTree = Icons.Filled.AccountTree
+    val AccountBalanceWallet = Icons.Filled.AccountBalanceWallet
+    val OpenInNew = Icons.Filled.OpenInNew
+    val ContentPaste = Icons.Filled.ContentPaste
+    val DarkMode = Icons.Filled.DarkMode
 
     // —— 设备与系统 ——
     val Wifi = Icons.Filled.Wifi
@@ -107,6 +111,13 @@ object DshIcons {
     val ArrowUpward = Icons.Filled.ArrowUpward
     val PlayArrow = Icons.Filled.PlayArrow
     val Rocket = Icons.Filled.Rocket
+    // —— v13 轨迹工具栏 / S26 检查器 ——
+    val UnfoldMore = Icons.Filled.UnfoldMore
+    val Compress = Icons.Filled.Compress
+    val Timer = Icons.Filled.Timer
+    val Restore = Icons.Filled.Restore
+    val PlayCircle = Icons.Filled.PlayCircle
+    val ContentCopy = Icons.Filled.ContentCopy
 
     // —— v11 插件生态（S12 / S19–S23）——
     val Storefront = Icons.Filled.Storefront
@@ -145,10 +156,14 @@ object DshIcons {
         "article" -> Article; "image" -> Image; "image_search" -> ImageSearch
         "slideshow" -> Slideshow; "table_chart" -> TableChart; "smartphone" -> Smartphone
         "public" -> Public; "palette" -> Palette; "help_outline" -> HelpOutline
-        "schedule" -> Schedule; "timeline" -> Timeline; "cached" -> Cached
+        "schedule" -> Schedule;         "timeline" -> Timeline; "cached" -> Cached
         "repeat" -> Icons.Filled.Repeat; "call_split" -> CallSplit
+        "unfold_more" -> UnfoldMore; "compress" -> Compress; "timer" -> Timer
+        "restore" -> Restore; "play_circle" -> PlayCircle; "content_copy" -> ContentCopy
         "settings_input_component" -> SettingsInputComponent; "vpn_key" -> VpnKey
         "draft" -> Draft; "visibility" -> Visibility; "zoom_in" -> Icons.Filled.ZoomIn
+        "account_balance_wallet" -> AccountBalanceWallet; "open_in_new" -> OpenInNew
+        "content_paste" -> ContentPaste; "dark_mode" -> DarkMode; "vpn_key" -> VpnKey
         else -> null
     }
 }

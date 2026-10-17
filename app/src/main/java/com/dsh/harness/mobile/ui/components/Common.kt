@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -102,6 +103,27 @@ fun DshChip(
         }
         Text(text, style = style, color = finalFg, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+// ============================ Card ============================
+
+/** 统一卡片容器：设计稿 .card 的 r16 + 1px 描边 + 内距 11/12。 */
+@Composable
+fun DshCard(
+    modifier: Modifier = Modifier,
+    padding: PaddingValues = PaddingValues(horizontal = 12.dp, vertical = 11.dp),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val c = DshTheme.colors
+    Column(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(c.card)
+            .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+            .padding(padding),
+        content = content,
+    )
 }
 
 // ============================ Button ============================

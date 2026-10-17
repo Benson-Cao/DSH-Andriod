@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import com.dsh.harness.mobile.ui.screens.EventKind
+import com.dsh.harness.mobile.ui.screens.TrajectoryEvent
 
 /**
  * UI 与 ACP 之间的翻译层。
@@ -375,7 +377,9 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                     _messages.value = _messages.value + ChatMessage(
                         id = "u-${System.nanoTime()}", role = Role.User, text = t,
                     )
-                    pushEvent("U", "用户输入", t.take(60))
+                    pushEvent(EventKind.User, "用户输入", t.take(60))
+                    // 一轮 = 一次用户提示触发一次模型请求（请求 #N 与轮次同号）
+                    pushEvent(EventKind.Request, "模型请求", "")
                 }
             }
 
@@ -422,7 +426,9 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                     name = title,
                     detail = detail,
                 )
-                pushEvent("T", title, detail)
+                // 子代理在官方语义里是「子工具」记录，而非独立大卡
+                val kind = if (title.contains("subagent", ignoreCase = true)) EventKind.SubTool else EventKind.Tool
+                pushEvent(kind, title, detail)
             }
 
             "tool_call_update" -> {
@@ -486,10 +492,21 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         return content.optString("text")
     }
 
-    /** 往时间线追加一个事件（上限 200 条，防止长会话无限增长） */
-    private fun pushEvent(tag: String, title: String, detail: String) {
-        _events.value = (_events.value + com.dsh.harness.mobile.ui.screens.TrajectoryEvent(
-            tag, title.ifBlank { "—" }, detail
+    /** 当前轮次：每来一条用户消息开新一轮（账本按「第 N 轮」分组用） */
+    private var curRound = 0
+
+    /** 往时间线追加一个事件（上限 200 条，防止长会话无限增长）。
+     *  v13：记录类型用 EventKind，一轮 = 一条用户消息触发的 用户 + 请求#N + 工具/子工具。 */
+    private fun pushEvent(kind: EventKind, title: String, detail: String, cost: String = "") {
+        if (kind == EventKind.User) curRound++
+        val inRound = kind != EventKind.Compress && kind != EventKind.Approval
+        _events.value = (_events.value + TrajectoryEvent(
+            kind = kind,
+            title = title.ifBlank { "—" },
+            detail = detail,
+            cost = cost,
+            round = if (inRound) curRound else 0,
+            reqIndex = if (kind == EventKind.Request) curRound else 0,
         )).takeLast(200)
     }
 
