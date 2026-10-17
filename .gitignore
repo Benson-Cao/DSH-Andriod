@@ -10,11 +10,10 @@ release/
 .kotlin/
 out/
 
-# ===== dsh bundle（195MB 二进制，不进版本库）=====
+# ===== dsh bundle（195MB，走 Git LFS，不在普通 git 对象里）=====
 # 里面有 node 运行时 + 上百个 @deepseek-ai 包，随 dsh 发行版走。
-# 构建前需自行把 dsh-bundle.tar.gz 放到 app/src/main/assets/，
-# 或用 DSH_BUNDLE 环境变量指向本地路径。见 README「获取 dsh bundle」。
-app/src/main/assets/dsh-bundle.tar.gz
+# 已用 Git LFS 追踪：app/src/main/assets/dsh-bundle.tar.gz（见 .gitattributes）。
+# 克隆仓库后需 `git lfs install` 才能拿到真实二进制（否则只有指针文件）。
 app/src/main/assets/dsh-bundle.tar
 
 # ⚠️ bootstrap-*.zip 故意**不**忽略：native 构建需要它们，
