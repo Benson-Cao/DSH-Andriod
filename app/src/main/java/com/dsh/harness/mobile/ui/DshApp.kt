@@ -32,6 +32,8 @@ import com.dsh.harness.mobile.ui.theme.Motion
 import android.content.ClipboardManager
 import android.content.ClipData
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 
 /**
  * App 根：把 18 屏串成一条可点击的完整链路。
@@ -213,6 +215,25 @@ fun DshApp(startRoute: Route = Route.S3Home) {
         cm?.setPrimaryClip(ClipData.newPlainText("dsh", text))
     }
 
+    /**
+     * 拉起系统浏览器打开外链（v27）。返回是否成功。
+     *
+     * 用 Intent.ACTION_VIEW 而非 CustomTabs：**不引新依赖**——
+     * androidx.browser 不在离线缓存里，且 ACTION_VIEW 零依赖即可把用户送到
+     * 真实页面，这正是 v23 那个假 URL 该有的行为。
+     */
+    fun openUrl(url: String): Boolean = try {
+        ctx.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        true
+    } catch (_: Throwable) {
+        // 没有可用浏览器时至少把地址复制到剪贴板，不静默失败
+        copyText(ctx, url)
+        false
+    }
+
     // 一次性提示（脱敏日志落盘路径等）
     var toast by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(toast) {
@@ -232,6 +253,10 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     LaunchedEffect(route) {
         if (route is Route.S21MarketDiscover || route is Route.S22MarketDetail) {
             vm.refreshMarketCatalog()
+        }
+        // v27：S31 的状态卡要显示**真实**是否已配置密钥，不能用进页时的旧快照
+        if (route is Route.S31AccountLogin || route is Route.S32AccountLoggedOut) {
+            vm.refreshApiKey()
         }
     }
 
@@ -531,13 +556,16 @@ fun DshApp(startRoute: Route = Route.S3Home) {
 
                     Route.S31AccountLogin -> S31AccountLogin(
                         onBack = { nav.backOrHome() },
-                        onCancelLogin = { nav.backOrHome() },
-                        // 设计稿 S31：翻真后落 S15 账号与余额（本 App 无真实登录 → 只演示路径）
+                        // v27：真动作 —— 拉起系统浏览器去平台申请 Key
+                        onOpenPlatform = {
+                            if (!openUrl("https://platform.deepseek.com/api_keys")) {
+                                toast = "没有可用浏览器，地址已复制到剪贴板"
+                            }
+                        },
+                        keyConfigured = apiKey.configured,
                         onOpenApp = {
                             accountLoggedIn = true
                             nav.go(Route.S15Account)
-                            // 诚实提示：演示登录只走通界面路径，真实跑任务仍需 API Key
-                            toast = "演示登录已生效 · 真实跑任务仍需 API Key"
                         },
                         onGoKey = { nav.go(Route.S14ApiKey) },
                     )

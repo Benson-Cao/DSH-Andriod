@@ -199,22 +199,45 @@ fun S30ModelDefault(
 
 // ============================ S31 DeepSeek 账号登录 ============================
 
+/**
+ * S31「连接 DeepSeek」—— **v27 起不再有演示登录**。
+ *
+ * ## 为什么整页重写（v23 的"诚实演示"仍然是个错误）
+ * v23 把假两态改成了诚实的演示卡，但那一页的**全部内容都是假的**：
+ * `auth.deepseek.com/authorize` 是我编的 URL（DeepSeek 根本没有这个端点）、
+ * 那个转圈是永不完成的假等待、「模拟完成授权」只切了个局部状态。
+ * 用户第二次反馈"演示还是死页面"是对的 —— 诚实标注的假按钮依然是假按钮，
+ * 用户要的是能用的路径，不是关于假象的说明。
+ *
+ * ## 实证结论（本机 dsh 全包源码核查，2026-10-19）
+ *   - `@deepseek-ai/dsh-authorization` 只是 flow 注册框架，其 README 第 12 行原文：
+ *     "本包自身**不提供特定 provider 的授权方法**"；
+ *   - 全仓只有 `dsh-llm-pi-ai`（OpenAI Codex）与 `dsh-tool-cordis` 注册了 flow，
+ *     **没有任何包为 `deepseek-official` 注册 OAuth**；
+ *   - dsh 的 `deepseek-official` route 唯一凭据是 `DEEPSEEK_API_KEY`
+ *     （出处在 dsh-llm-deepseek/lib/index.js 的 DEFAULT_API_KEY_ENV）。
+ *
+ * 也就是说"用账号额度免 API Key"在上游不存在，App 无法凭空造出来。
+ * 所以这一页现在只做**真实可执行的三件事**：拉起系统浏览器去平台申请 Key、
+ * 直连已有真实写入实现的「API 密钥」页、如实展示当前是否已配置。
+ */
 @Composable
 fun S31AccountLogin(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
-    onCancelLogin: () -> Unit = {},
+    /** 真动作：用系统浏览器打开 platform.deepseek.com 申请 Key */
+    onOpenPlatform: () -> Unit,
+    /** 真动作：跳「设置 → API 密钥」（S14ApiKey，真写 dsh credentials 存储） */
+    onGoKey: () -> Unit,
+    /** 真实读取 DshCredentials.describe().configured —— 不再是局部假状态 */
+    keyConfigured: Boolean = false,
+    /** 已配置密钥后进入应用 */
     onOpenApp: () -> Unit = {},
-    onGoKey: () -> Unit = {},
 ) {
     val c = DshTheme.colors
-    // v23 拆两态：等待授权 →（演示授权）→ 登录成功。
-    // 修复点：此前两态同屏展示（用户截图实测），看起来"登录成功"却什么都不能用；
-    // 且本 App 未接入真实 OAuth，必须明示演示性质，不拿设计稿的假邮箱充数。
-    var authorized by remember { mutableStateOf(false) }
 
     DshScreen(modifier) {
-        DshNavBar(onBack = onBack, title = "登录 DeepSeek 账号", stacked = true)
+        DshNavBar(onBack = onBack, title = "连接 DeepSeek", stacked = true)
 
         Column(
             Modifier
@@ -238,10 +261,10 @@ fun S31AccountLogin(
                 Icon(DshIcons.Bolt, null, Modifier.size(25.dp), tint = Color.White)
             }
             Spacer(Modifier.height(13.dp))
-            Text("用账号额度直接跑任务", style = Type.title, color = c.ink)
+            Text("接入 DeepSeek 凭据", style = Type.title, color = c.ink)
             Spacer(Modifier.height(8.dp))
             Text(
-                "登录后模型列表会多出「DeepSeek 账号」一组，不需要单独申请 API Key，联网搜索也不必再配提供方。",
+                "本地引擎只认 API Key 一种凭据。到平台申请一次，填一次全局生效，余额与用量在平台网页查看。",
                 style = Type.sec.copy(lineHeight = 21.sp),
                 color = c.ink3,
             )
@@ -254,121 +277,73 @@ fun S31AccountLogin(
                     .background(c.card)
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
             ) {
-                S31Benefit("免 API Key", "消耗账号余额，充值即用")
+                S31Benefit("填一次，全局生效", "写入 dsh 凭据存储，所有会话共用")
                 DshDivider()
-                S31Benefit("联网搜索开箱可用", "不必再配搜索与抓取提供方")
+                S31Benefit("所有模型可用", "V4-Flash / Flash / Reasoner 等全系列")
                 DshDivider()
-                S31Benefit("余额与用量可查", "设置 → 账号与余额")
+                S31Benefit("余额与用量", "platform.deepseek.com 用量与账单")
             }
 
             Spacer(Modifier.height(13.dp))
-            if (!authorized) {
-                // —— 态一：等待授权 ——
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.soft)
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(9.dp),
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        color = c.brand,
-                        strokeWidth = 2.dp,
-                    )
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "等待你在系统浏览器完成授权",
-                            style = Type.sec.copy(fontWeight = FontWeight.SemiBold),
-                            color = c.ink,
-                        )
-                        Text(
-                            "auth.deepseek.com/authorize",
-                            style = Type.mono.copy(fontSize = 10.5.sp),
-                            color = c.ink3,
-                            modifier = Modifier.padding(top = 2.dp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Text(
-                        "取消",
-                        style = Type.sec,
-                        color = c.danger,
-                        modifier = Modifier.clickable { onCancelLogin() },
-                    )
-                }
 
-                Spacer(Modifier.height(10.dp))
-                // 诚实说明：本 App 没有真实 OAuth，别让用户以为真跳了浏览器
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.warnSoft())
-                        .padding(12.dp),
+            // —— 真实状态卡：读 DshCredentials，不是演示状态 ——
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(if (keyConfigured) c.card else c.soft)
+                    .border(
+                        1.dp,
+                        if (keyConfigured) c.ok else c.line,
+                        RoundedCornerShape(Radius.xl),
+                    )
+                    .padding(12.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    Icon(
+                        if (keyConfigured) DshIcons.CheckCircle else DshIcons.Info,
+                        null,
+                        Modifier.size(17.dp),
+                        tint = if (keyConfigured) c.ok else c.ink3,
+                    )
                     Text(
-                        "演示登录",
-                        style = Type.sec.copy(fontWeight = FontWeight.SemiBold),
+                        if (keyConfigured) "API Key 已配置" else "尚未配置 API Key",
+                        style = Type.rowTitle.copy(fontWeight = FontWeight.Bold),
                         color = c.ink,
                     )
-                    Text(
-                        "本 App 未接入 DeepSeek OAuth 授权流程，不会真正打开系统浏览器。" +
-                            "点下方按钮仅演示登录后的界面路径；真实跑任务仍需在「设置 → API 密钥」配置 Key。",
-                        style = Type.meta.copy(lineHeight = 18.sp),
-                        color = c.ink2,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
                 }
-
-                Spacer(Modifier.height(13.dp))
-                DshBtn("模拟完成授权（演示）", icon = DshIcons.Bolt, onClick = { authorized = true })
-            } else {
-                // —— 态二：登录成功（演示路径的终点）——
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.card)
-                        .border(1.dp, c.ok, RoundedCornerShape(Radius.xl))
-                        .padding(12.dp),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Icon(DshIcons.CheckCircle, null, Modifier.size(17.dp), tint = c.ok)
-                        Text(
-                            "登录成功",
-                            style = Type.rowTitle.copy(fontWeight = FontWeight.Bold),
-                            color = c.ink,
-                        )
-                        DshChip("已回跳", tone = ChipTone.Ok, mini = true)
-                    }
-                    Text(
-                        "你可以关闭此页面，返回应用继续工作。",
-                        style = Type.meta.copy(lineHeight = 18.sp),
-                        color = c.ink2,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                }
-
-                Spacer(Modifier.height(13.dp))
-                DshBtn("打开应用", icon = DshIcons.OpenInNew, onClick = onOpenApp)
+                Text(
+                    if (keyConfigured)
+                        "凭据已落盘。出于安全考虑不显示原文，可到「设置 → API 密钥」重新录入。"
+                    else
+                        "点下方按钮在系统浏览器打开 platform.deepseek.com 申请，拿到 sk- 开头的密钥后回来填入。",
+                    style = Type.meta.copy(lineHeight = 18.sp),
+                    color = c.ink2,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
 
+            Spacer(Modifier.height(13.dp))
+            if (keyConfigured) {
+                DshBtn("进入应用", icon = DshIcons.OpenInNew, onClick = onOpenApp)
+                Spacer(Modifier.height(9.dp))
+                DshBtn("管理密钥", tone = BtnTone.Ghost, onClick = onGoKey)
+            } else {
+                DshBtn("去平台申请 API Key", icon = DshIcons.OpenInNew, onClick = onOpenPlatform)
+                Spacer(Modifier.height(9.dp))
+                DshBtn("我已有 Key，直接填写", tone = BtnTone.Ghost, onClick = onGoKey)
+            }
+
+            // 为什么没有「账号登录」——一句话说清上游事实，不兜圈子
             Text(
-                "已有 API Key？去配置密钥",
-                style = Type.sec,
-                color = c.brand,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onGoKey() }
-                    .padding(vertical = 11.dp),
-                textAlign = TextAlign.Center,
+                "关于「账号登录免 API Key」：本地引擎的授权框架不提供 DeepSeek 的登录方式，" +
+                    "上游没有这条通路，App 造不出来，所以这里不放假的登录按钮。",
+                style = Type.meta.copy(lineHeight = 18.sp),
+                color = c.ink3,
+                modifier = Modifier.padding(top = 16.dp, bottom = 6.dp),
             )
             Spacer(Modifier.height(4.dp))
         }
@@ -431,16 +406,18 @@ fun S32AccountLoggedOut(
                     Icon(DshIcons.Person, null, Modifier.size(20.dp), tint = c.ink3)
                 }
                 Column(Modifier.weight(1f)) {
-                    Text("未登录", style = Type.rowTitle, color = c.ink)
+                    // v27：不再说"登录/账号额度" —— 上游没有 DeepSeek 账号 OAuth，
+                    // 真实状态只有"API Key 配没配"（见 S31 的实证说明）。
+                    Text("未配置凭据", style = Type.rowTitle, color = c.ink)
                     Text(
-                        "登录后用账号额度跑任务",
+                        "填入 API Key 后即可跑任务",
                         style = Type.meta,
                         color = c.ink3,
                         modifier = Modifier.padding(top = 3.dp),
                     )
                 }
                 DshChip(
-                    "登录",
+                    "去配置",
                     tone = ChipTone.Brand,
                     onClick = onLogin,
                     modifier = Modifier.height(28.dp),
@@ -472,7 +449,7 @@ fun S32AccountLoggedOut(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            "登录后可见",
+                            "在 platform.deepseek.com 查看",
                             style = Type.meta,
                             color = c.ink3,
                             modifier = Modifier.padding(bottom = 7.dp),
