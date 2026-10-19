@@ -100,9 +100,11 @@ sealed interface Route {
     data object S49NewTermuxSession : Route  // Termux 新建终端会话
 }
 
-/** 浮动层（Sheet），独立于路由栈 */
+/** 浮动层（Sheet），独立于路由栈。
+ *  v25：不再有 Approval —— S7 审批 Sheet 由引擎的 pendingPermission 状态驱动
+ *  （ACP session/request_permission），不是用户手动唤起的浮动层。 */
 private enum class SheetKind {
-    None, Workspace, NewSession, More, Approval, Diagnostics, Model,
+    None, Workspace, NewSession, More, Diagnostics, Model,
     /** v20：S3 右上角「本机服务与快捷入口」 */
     Service,
     /** v20：S38 退出登录二次确认 */
@@ -189,6 +191,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     val marketCatalog by vm.marketCatalog.collectAsState()
     val marketCatalogLoading by vm.marketCatalogLoading.collectAsState()
     val marketCatalogError by vm.marketCatalogError.collectAsState()
+    // v25：真实权限审批（ACP session/request_permission）；null = 当前无待确认操作
+    val pendingPermission by vm.pendingPermission.collectAsState()
 
     // 市场侧（S21/S22/S23）的数据源。
     // 本机 $HOME/node_modules/@deepseek-ai/ 下没有 dshmarket → 市场本体未安装，
@@ -333,7 +337,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         contextUsage = contextUsage,
                         onCancel = { vm.cancel() },
                         onOpenMore = { sheet = SheetKind.More },
-                        onOpenApproval = { sheet = SheetKind.Approval },
                         onOpenTrajectory = { nav.go(Route.S8Trajectory) },
                         onSend = { vm.send(it) },
                     )
@@ -732,17 +735,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     },
                 )
 
-                SheetKind.Approval -> S7ApprovalSheet(
-                    visible = true,
-                    onDismiss = { sheet = SheetKind.None },
-                    onAllowOnce = {
-                        sheet = SheetKind.None
-                        nav.replace(Route.S6ChatResult)
-                    },
-                    onAllowAlways = { sheet = SheetKind.None },
-                    onReject = { sheet = SheetKind.None },
-                )
-
                 SheetKind.Diagnostics -> S3EngineDiagnostics(
                     visible = true,
                     onDismiss = { sheet = SheetKind.None },
@@ -837,6 +829,21 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 )
             }
 
+            // —— v25：真实权限审批 Sheet（ACP session/request_permission）——
+            // 引擎反向请求时自动弹出，与当前路由/当前 Sheet 无关 —— 这是进程级模态，
+            // dsh 那轮提示词正挂着等应答。按钮按协议 options 渲染，optionId 原样回传。
+            pendingPermission?.let { perm ->
+                val tc = vm.toolCallOf(perm.toolCallId)
+                S7ApprovalSheet(
+                    visible = true,
+                    permission = perm,
+                    toolName = tc?.name.orEmpty(),
+                    toolDetail = tc?.detail.orEmpty(),
+                    onCancel = { vm.cancelPermission() },
+                    onRespond = { vm.respondPermission(it) },
+                )
+            }
+
             // —— 侧边栏：全局唯一一级入口 ——
             S4Drawer(
                 visible = drawerOpen,
@@ -883,9 +890,16 @@ fun DshApp(startRoute: Route = Route.S3Home) {
             }
         }
 
-        // 返回键：先关浮动层 → 再退栈 → 首页时退出 App
-        BackHandler(enabled = sheet != SheetKind.None || nav.canGoBack) {
+        // 返回键：先取消权限审批 → 关浮动层 → 再退栈 → 首页时退出 App
+        // v25：审批 Sheet 是引擎级模态（dsh 那轮挂着等应答），优先级最高；
+        // 按取消应答 = 协议层的 rejected/cancelled，不能假装没发生。
+        BackHandler(
+            enabled = pendingPermission != null || mentionOpen ||
+                sheet != SheetKind.None || nav.canGoBack,
+        ) {
             when {
+                pendingPermission != null -> vm.cancelPermission()
+                mentionOpen -> mentionOpen = false
                 sheet != SheetKind.None -> sheet = SheetKind.None
                 else -> nav.backOrHome()
             }

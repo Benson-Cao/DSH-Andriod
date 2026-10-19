@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dsh.harness.mobile.data.DshAcpClient
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
 
@@ -278,7 +279,6 @@ fun S5ChatRunning(
     liveTools: List<com.dsh.harness.mobile.data.DshViewModel.ToolCall> = emptyList(),
     /** v13 轨迹账本：对话/轨迹标签的「轨迹」态复用 */
     events: List<TrajectoryEvent> = emptyList(),
-    showApproval: Boolean = false,
     /** 返回上一级（由 App 层的 NavState 决定从哪来回哪去） */
     onBack: () -> Unit,
     /** 是否有进行中的提示词（决定"停止"是否出现） */
@@ -288,7 +288,6 @@ fun S5ChatRunning(
     /** 中断当前提示词（ACP: session/cancel） */
     onCancel: () -> Unit = {},
     onOpenMore: () -> Unit,
-    onOpenApproval: () -> Unit,
     onOpenTrajectory: () -> Unit,
     onSend: (String) -> Unit,
 ) {
@@ -468,6 +467,9 @@ fun S5ChatRunning(
         }
 
         // —— 输入条（吸底第二层）——
+        // 设计稿里它是静态展示（无点击）；真实可输入的框在首页 S3。
+        // v25 实测反馈：原来点它弹 S7 演示审批 Sheet —— 用户想发消息却看到
+        // 「需要你的确认」，等于把输入区变成了审批入口。现在点它回首页输入。
         Column(Modifier.fillMaxWidth().padding(horizontal = Space.lg)) {
             Row(
                 Modifier
@@ -475,7 +477,7 @@ fun S5ChatRunning(
                     .clip(RoundedCornerShape(Radius.xl))
                     .background(c.card)
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .clickable { onOpenApproval() }
+                    .clickable { onBack() }
                     .padding(horizontal = 10.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -577,21 +579,41 @@ fun BoxScope.S5MoreSheet(
 
 /**
  * S7 操作审批 —— 设计稿标 Sheet 高 62%。
- * 关键文案原则（设计稿原文）：切到 Read Only 时写入类操作一律询问；
- * Full Access 不再提示 —— 这段必须留在屏上，不能省。
+ *
+ * v25 起接**真实协议**（ACP `session/request_permission`）：
+ *   - permission 来自 DshAcpClient.pendingPermission，toolCallId 指向触发
+ *     这次审批的工具调用（session/update 的 tool_call 事件会先把它带过来）；
+ *   - 按钮**按 permission.options 渲染** —— 协议实证（dsh-acp
+ *     lib/index.js:1115-1137）只有 allow-once / reject-once 两个一次性选项，
+ *     **没有 allow_always**。设计稿的「本会话始终允许此类操作」在真实协议里
+ *     没有对应物，v24 及以前那个按钮点了只是关窗（骗人），已删除。
+ *   - 取消（拖走/返回）走 onCancel，协议层按 cancelled 应答 = 拒绝。
+ *
+ * 设计稿原文仍保留在脚注：切到 Read Only 时写入类操作一律询问；
+ * Full Access 不再提示 —— 这是权限档位的行为说明，必须留在屏上。
  */
 @Composable
 fun BoxScope.S7ApprovalSheet(
     visible: Boolean,
-    onDismiss: () -> Unit,
-    onAllowOnce: () -> Unit,
-    onAllowAlways: () -> Unit,
-    onReject: () -> Unit,
+    permission: DshAcpClient.PendingPermission,
+    /** 触发工具名（tool_call 事件的 title）；空串 = 协议还没推过来，走兜底文案 */
+    toolName: String,
+    /** 工具参数摘要（命令/路径，来自 rawInput）；空串 = 协议未提供 */
+    toolDetail: String,
+    onCancel: () -> Unit,
+    /** 选中某个协议选项，optionId 原样回传 */
+    onRespond: (String) -> Unit,
 ) {
     val c = DshTheme.colors
+    // 协议选项 → 设计稿按钮位：allow 类进主按钮，reject 类进幽灵按钮，
+    // 其余（协议真出现第三种时）按幽灵渲染并用协议原名，不猜语义。
+    val allowOpt = permission.options.firstOrNull { it.kind.contains("allow", true) }
+    val rejectOpt = permission.options.firstOrNull { it.kind.contains("reject", true) }
+    val restOpts = permission.options.filter { it != allowOpt && it != rejectOpt }
+
     DshSheet(
         visible = visible,
-        onDismiss = onDismiss,
+        onDismiss = onCancel,
         maxHeightRatio = 0.62f,
         header = {
             DshSheetHeader(
@@ -599,39 +621,36 @@ fun BoxScope.S7ApprovalSheet(
                 icon = DshIcons.Shield,
                 iconTint = c.warn,
                 trailing = {
-                    DshChip("Workspace Write", tone = ChipTone.Warn, mini = true)
+                    DshChip(
+                        text = toolName.ifEmpty { "权限确认" },
+                        tone = ChipTone.Warn,
+                        mini = true,
+                    )
                 },
             )
         },
         content = {
             Text(
-                "将要执行的命令",
+                if (toolName.isNotEmpty()) "$toolName 请求执行操作" else "本地引擎请求执行操作",
                 style = Type.secTitle,
                 color = c.ink3,
                 modifier = Modifier.padding(bottom = 6.dp),
             )
-            DshCode(
-                "rm -rf ./dist\n&& npm run build\n&& python scripts/export_all.py --overwrite",
-            )
-
-            Text(
-                "影响范围",
-                style = Type.secTitle,
-                color = c.ink3,
-                modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
-            )
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-            ) {
-                ImpactRow(DshIcons.Check, "删除", "./dist", "工作区内", c.ok)
-                DshDivider()
-                ImpactRow(DshIcons.Check, "覆盖", "reports/*.csv", "3 个文件", c.ok)
-                DshDivider()
-                ImpactRow(DshIcons.Warning, "不可回滚", "", "未纳入 Git", c.danger, dangerText = true)
+            if (toolDetail.isNotEmpty()) {
+                DshCode(toolDetail)
+            } else {
+                // 诚实兜底：协议没给参数原文（tool_call 事件还没到）时不编造命令。
+                // v24 这里硬编码了一条 rm -rf 演示命令，真机上每次审批都显示它。
+                Text(
+                    "协议未提供命令原文（工具调用详情尚未同步，可拒绝后重试）",
+                    style = Type.meta,
+                    color = c.ink3,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.md))
+                        .background(c.line2)
+                        .padding(horizontal = 10.dp, vertical = 12.dp),
+                )
             }
 
             Text(
@@ -642,45 +661,56 @@ fun BoxScope.S7ApprovalSheet(
             )
         },
         footer = {
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                DshBtn("拒绝", tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onReject)
-                DshBtn("本次允许", modifier = Modifier.weight(1.3f), onClick = onAllowOnce)
+            if (permission.options.isEmpty()) {
+                // 协议异常兜底：一个选项都没给时也要有出口，
+                // 否则用户被一张没有按钮的 Sheet 卡死，dsh 侧那轮也永远挂起。
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    DshBtn(
+                        "拒绝",
+                        tone = BtnTone.Ghost,
+                        modifier = Modifier.weight(1f),
+                        onClick = onCancel,
+                    )
+                    DshBtn(
+                        "本次允许",
+                        modifier = Modifier.weight(1.3f),
+                        onClick = { onRespond("allow-once") },
+                    )
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    rejectOpt?.let { opt ->
+                        DshBtn(
+                            approvalBtnLabel(opt),
+                            tone = BtnTone.Ghost,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onRespond(opt.optionId) },
+                        )
+                    }
+                    allowOpt?.let { opt ->
+                        DshBtn(
+                            approvalBtnLabel(opt),
+                            modifier = Modifier.weight(1.3f),
+                            onClick = { onRespond(opt.optionId) },
+                        )
+                    }
+                }
+                restOpts.forEach { opt ->
+                    Spacer(Modifier.height(9.dp))
+                    DshBtn(
+                        approvalBtnLabel(opt),
+                        tone = BtnTone.Ghost,
+                        onClick = { onRespond(opt.optionId) },
+                    )
+                }
             }
-            Spacer(Modifier.height(9.dp))
-            DshBtn("本会话始终允许此类操作", tone = BtnTone.Ghost, onClick = onAllowAlways)
         },
     )
 }
 
-@Composable
-private fun ImpactRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    verb: String,
-    path: String,
-    tail: String,
-    tint: Color,
-    dangerText: Boolean = false,
-) {
-    val c = DshTheme.colors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Icon(icon, null, Modifier.size(15.dp), tint = tint)
-        Text(verb, style = Type.chip, color = c.ink2)
-        if (path.isNotEmpty()) {
-            Text(path, style = Type.mono, color = c.ink2)
-        }
-        Spacer(Modifier.weight(1f))
-        Text(
-            tail,
-            style = Type.chip,
-            color = if (dangerText) c.danger else c.ink3,
-            fontWeight = if (dangerText) androidx.compose.ui.text.font.FontWeight.SemiBold
-            else androidx.compose.ui.text.font.FontWeight.Normal,
-        )
-    }
+/** 协议 kind → 设计稿中文按钮名；未知 kind 用协议原 name，不翻译更不编造 */
+private fun approvalBtnLabel(o: DshAcpClient.PendingPermission.PermissionOption): String = when {
+    o.kind.contains("reject", true) -> "拒绝"
+    o.kind.contains("allow", true) -> "本次允许"
+    else -> o.name.ifEmpty { o.optionId }
 }

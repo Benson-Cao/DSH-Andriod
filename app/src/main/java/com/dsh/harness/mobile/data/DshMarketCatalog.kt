@@ -157,7 +157,13 @@ object DshMarketCatalog {
                 // 全零头 = 归档结束
                 if (header.all { it == 0.toByte() }) return null
                 val name = String(header, 0, 100).trim('\u0000', ' ', '\n')
-                val sizeStr = String(header, 124, 136).trim('\u0000', ' ', '\n')
+                // size 字段：offset 124、**长度 12**（八进制 ASCII，NUL/空格结尾）。
+                // 注意 String(bytes, off, len) 第三参是长度不是终点 —— 写成 136 会
+                // 把窗口跨进 mtime/magic 字段，trim 出 "0000015610 3560116604 ..." 这种
+                // 混叠串然后炸在 toLong(8)（v25 真机实测）。
+                val sizeStr = String(header, 124, 12, Charsets.UTF_8)
+                    .trim('\u0000', ' ', '\n')
+                    .takeWhile { it in '0'..'7' }
                 val size = if (sizeStr.isEmpty()) 0 else sizeStr.toLong(8)
                 val padded = ((size + 511) / 512) * 512
                 if (name == member) {

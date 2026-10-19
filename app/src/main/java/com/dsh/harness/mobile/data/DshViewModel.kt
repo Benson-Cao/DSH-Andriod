@@ -24,7 +24,7 @@ import com.dsh.harness.mobile.ui.screens.TrajectoryEvent
  *   S5 发送消息      → prompt(text)
  *   S5 工具调用组    → ToolCall 列表（session/update 的 tool_call 生命周期）
  *   S5 子代理        → subagent 事件
- *   S7 审批 Sheet    → PendingPermission（客户端目前自动放行，UI 上可改为手动）
+ *   S7 审批 Sheet    → pendingPermission（真实协议请求，用户点选后才应答）
  *   S4 侧栏会话列表  → listSessions(cwd)
  *   S9 模型/思考强度 → setConfigOption("model"/"reasoning_effort")
  */
@@ -189,6 +189,31 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    // ==================== 权限审批（S7） ====================
+
+    /**
+     * 待审批的权限请求（ACP session/request_permission）。null = 当前没有。
+     *
+     * v25 前客户端在协议层**自动放行**（扫 options 选 allow 直接回），
+     * UI 上的 S7 Sheet 只是演示：点「拒绝」命令照样执行（用户实测截图）。
+     * 现在请求先落到这个 StateFlow，由 UI 弹 Sheet、用户点选后应答。
+     */
+    val pendingPermission: StateFlow<DshAcpClient.PendingPermission?> = client.pendingPermission
+
+    /** 用户点了某个协议选项（optionId 原样回传，如 "allow-once"） */
+    fun respondPermission(optionId: String) {
+        client.respondPermission(optionId)
+    }
+
+    /** 用户取消（拖走 Sheet / 返回键）——按 cancelled 应答，dsh 侧视为拒绝 */
+    fun cancelPermission() {
+        client.respondPermission(null)
+    }
+
+    /** 审批 Sheet 展示用：按 toolCallId 找触发工具（协议还没推 tool_call 时返回 null） */
+    fun toolCallOf(toolCallId: String): ToolCall? =
+        _tools.value.firstOrNull { it.id == toolCallId }
 
     // ==================== API 密钥（S19 API Key） ====================
 

@@ -59,6 +59,20 @@ class DshAcpClient(private val context: Context) {
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError
 
+    /**
+     * 待用户审批的权限请求（ACP `session/request_permission`，设计稿 S7）。
+     * null = 当前没有待确认的操作。
+     *
+     * 协议实证（dsh-acp lib/index.js:1115-1137）：params 形如
+     *   { sessionId, toolCall:{toolCallId},
+     *     options:[ {optionId:"allow-once",name:"Allow once",kind:"allow_once"},
+     *               {optionId:"reject-once",name:"Reject",kind:"reject_once"} ] }
+     * 应答 `{outcome:{outcome:"selected",optionId}}` 或 `{outcome:"cancelled"}`。
+     * **没有 allow_always** —— 服务端只有一次性语义，UI 不能伪造"始终允许"。
+     */
+    private val _pendingPermission = MutableStateFlow<PendingPermission?>(null)
+    val pendingPermission: StateFlow<PendingPermission?> = _pendingPermission
+
     private var nextId = 1
     private var sessionId: String? = null
     private var process: Process? = null
@@ -261,34 +275,69 @@ class DshAcpClient(private val context: Context) {
     /** 上层回调：把协议事件转成 UI 状态 */
     var onUpdate: ((JSONObject?) -> Unit)? = null
 
-    /** 权限请求：默认自动放行一次（真机上先不打断用户） */
+    /**
+     * 权限请求：**只记录，不自动应答**。
+     *
+     * v24 及以前这里扫 options 自动选 allow 直接回协议 —— 真机上
+     * 「点拒绝命令照样跑」，因为 UI 的三按钮和协议层完全脱节
+     * （v25 用户实测截图：S7 Sheet 三个按钮都只是关窗）。
+     * 现在只把请求存进 pendingPermission StateFlow 供 UI 弹 Sheet，用户选完再应答。
+     */
     private fun handlePermissionRequest(m: JSONObject) {
         val id = m.optInt("id", -1)
         val params = m.optJSONObject("params")
-        val options = params?.optJSONArray("options")
-        // 取第一个允许类选项
-        var chosen = ""
-        if (options != null) {
-            for (i in 0 until options.length()) {
-                val o = options.optJSONObject(i) ?: continue
-                val kind = o.optString("kind")
-                if (kind.contains("allow", true) || kind.contains("allow_once", true)) {
-                    chosen = o.optString("optionId")
-                    break
-                }
-            }
-            if (chosen.isEmpty() && options.length() > 0) {
-                chosen = options.optJSONObject(0)?.optString("optionId") ?: ""
+        val toolCallId = params?.optJSONObject("toolCall")?.optString("toolCallId").orEmpty()
+        val opts = ArrayList<PendingPermission.PermissionOption>()
+        params?.optJSONArray("options")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                opts.add(
+                    PendingPermission.PermissionOption(
+                        optionId = o.optString("optionId"),
+                        name = o.optString("name").ifEmpty { o.optString("kind") },
+                        kind = o.optString("kind"),
+                    )
+                )
             }
         }
-        emit("权限请求 → 自动选择 $chosen")
+        // 服务端在收到应答前不会再发第二个（request/response 语义），
+        // 但真出现就把旧的按取消应答掉，避免 dsh 侧那轮永久挂起。
+        _pendingPermission.value?.let { stale ->
+            emit("覆盖未应答的权限请求 id=${stale.requestId}（按取消应答）")
+            sendPermissionOutcome(stale.requestId, null)
+        }
+        _pendingPermission.value = PendingPermission(
+            requestId = id,
+            toolCallId = toolCallId,
+            options = opts,
+        )
+        emit("权限请求 toolCall=$toolCallId options=${opts.map { it.optionId }}（等待用户）")
+    }
+
+    /**
+     * 用户对权限请求的应答。optionId = null 表示取消（拖走 Sheet / 返回键），
+     * 协议层按 `outcome:"cancelled"` 回，dsh 侧视为拒绝。
+     */
+    fun respondPermission(optionId: String?) {
+        val p = _pendingPermission.value ?: return
+        _pendingPermission.value = null
+        sendPermissionOutcome(p.requestId, optionId)
+        emit("权限应答 → ${optionId ?: "cancelled"}")
+    }
+
+    private fun sendPermissionOutcome(requestId: Int, optionId: String?) {
+        val outcome = JSONObject()
+        if (optionId == null) {
+            outcome.put("outcome", "cancelled")
+        } else {
+            outcome.put("outcome", "selected")
+            outcome.put("optionId", optionId)
+        }
         send(
             JSONObject()
                 .put("jsonrpc", "2.0")
-                .put("id", id)
-                .put("result", JSONObject().put("outcome", JSONObject()
-                    .put("outcome", "selected")
-                    .put("optionId", chosen)))
+                .put("id", requestId)
+                .put("result", JSONObject().put("outcome", outcome))
         )
     }
 
@@ -416,6 +465,8 @@ class DshAcpClient(private val context: Context) {
         try { process?.destroy() } catch (_: Exception) {}
         process = null
         sessionId = null
+        // 进程没了，挂起的审批也不可能再有应答 → 清掉，别让 UI 卡在一张死 Sheet 上
+        _pendingPermission.value = null
         _phase.value = Phase.Idle
     }
 
@@ -436,5 +487,25 @@ class DshAcpClient(private val context: Context) {
         m.invoke(p).toString()
     } catch (_: Throwable) {
         "?"
+    }
+
+    /**
+     * 一条待审批的权限请求（ACP `session/request_permission` 的解析结果）。
+     *
+     * 协议实证见 [handlePermissionRequest] 的注释：options 在真实 dsh 里固定是
+     * allow-once / reject-once 两个**一次性**选项，所以设计稿的
+     * 「本会话始终允许此类操作」没有协议对应物 —— S7 的按钮必须按 options
+     * 渲染，而不是按设计稿硬编码三个。
+     */
+    data class PendingPermission(
+        val requestId: Int,
+        val toolCallId: String,
+        val options: List<PermissionOption>,
+    ) {
+        data class PermissionOption(
+            val optionId: String,
+            val name: String,
+            val kind: String,
+        )
     }
 }
