@@ -34,6 +34,11 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.dsh.harness.SafConfig
+import com.dsh.harness.SafProxyServer
 
 /**
  * App 根：把 18 屏串成一条可点击的完整链路。
@@ -95,6 +100,8 @@ sealed interface Route {
     data object S47GitCommit : Route         // Git 提交
     data object S48Archived : Route          // 归档会话
     data object S49NewTermuxSession : Route  // Termux 新建终端会话
+    // v30：SAF 存储目录桥（取代 v29 删掉的 NAS 假页面）
+    data object S50StorageDir : Route
 }
 
 /** 浮动层（Sheet），独立于路由栈。
@@ -236,6 +243,32 @@ fun DshApp(startRoute: Route = Route.S3Home) {
         if (toast != null) {
             kotlinx.coroutines.delay(2600)
             toast = null
+        }
+    }
+
+    // v30：SAF 存储目录桥（方案 A）。目录选择器必须在 Compose 宿主侧注册——
+    // MainActivity 是另一个 Activity，其 onActivityResult 收不到本 Activity 的选取结果。
+    // 选取成功后固化持久化授权、写 SafConfig、幂等起本地代理，再通知相关屏重读。
+    var safTick by remember { mutableStateOf(0) }
+    val safLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            try {
+                ctx.contentResolver.takePersistableUriPermission(uri, flags)
+            } catch (_: Throwable) {
+                // 固化失败也继续：下次读写会暴露，由 UI 提示重新授权
+            }
+            val id = try { DocumentsContract.getTreeDocumentId(uri) } catch (_: Throwable) { null }
+            val pickName = id?.substringAfterLast(':')?.substringAfterLast('/')
+                ?.takeIf { it.isNotBlank() } ?: "外部存储"
+            SafConfig.save(ctx, uri, pickName)
+            SafProxyServer.start(ctx)   // 幂等：配置每次请求现读，换目录无需重启
+            safTick++
+            toast = "已挂载存储目录：$pickName"
+        } else {
+            toast = "已取消选择存储目录"
         }
     }
 
@@ -394,6 +427,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     Route.S11Workspace -> S11Workspace(
                         // 设计稿 S11 顶栏是「返回 + ☰ 入口」；用户要求此处用返回
                         onBack = { nav.backOrHome() },
+                        workspace = workspace,
                         onOpenDrawer = { drawerOpen = true },
                         onSearch = { nav.go(Route.S45GlobalSearch) },
                         onAddWorkspace = { nav.go(Route.S41PickFolder) },
@@ -499,6 +533,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onPresets = { nav.go(Route.S33AgentPresets) },
                         onSearch = { nav.go(Route.S45GlobalSearch) },
                         onTermux = { nav.go(Route.S27Termux) },
+                        onStorage = { nav.go(Route.S50StorageDir) },
                     )
 
                     // —— API 密钥：写入 dsh 的 credentials 存储（$DSH_HOME/.credentials.yaml）——
@@ -521,8 +556,16 @@ fun DshApp(startRoute: Route = Route.S3Home) {
 
                     Route.S27Termux -> S27Termux(
                         onBack = { nav.backOrHome() },
-                        onOpenUi = { toast = "已在浏览器打开 dsh web（本机 3081）" },
-                        onStop = { toast = "服务已停止，会话日志保留" },
+                        connectionReady = connection == DshViewModel.ClientPhase.Ready,
+                        workspace = workspace,
+                        // 真实动作：拉起系统浏览器打开本机 dsh web（:3081）；
+                        // 没起服务时优雅降级为复制地址
+                        onOpenUi = {
+                            if (!openUrl("http://localhost:3081")) {
+                                toast = "没有可用浏览器，地址已复制到剪贴板"
+                            }
+                        },
+                        onStop = { toast = "请在 Termux 中停止 dsh web 服务" },
                         // 设计稿 S27：日志行导出 → S46 数据导出
                         onExportLog = { nav.go(Route.S46Export) },
                         onCopyCommand = { cmd ->
@@ -688,12 +731,20 @@ fun DshApp(startRoute: Route = Route.S3Home) {
 
                     Route.S49NewTermuxSession -> S49NewTermuxSession(
                         onBack = { nav.backOrHome() },
+                        workspace = workspace,
                         onPickWorkspace = { nav.go(Route.S41PickFolder) },
-                        onCreate = {
-                            // 建完回到 S27 终端窗口（会话列表里可切换），不压新栈
-                            toast = "终端会话已创建"
+                        onCreate = { cmd ->
+                            // 把真实拼接的启动命令复制到剪贴板，回到 S27 终端窗口
+                            copyText(ctx, cmd)
+                            toast = "已复制启动命令，请在 Termux 中执行"
                             nav.backOrHome()
                         },
+                    )
+
+                    Route.S50StorageDir -> S50StorageDir(
+                        onBack = { nav.backOrHome() },
+                        refreshTick = safTick,
+                        onPick = { safLauncher.launch(null) },
                     )
 
                 }
@@ -847,6 +898,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     nav.go(if (apiKey.configured) Route.S15Account else Route.S32AccountLoggedOut)
                 },
                 onTermux = { drawerOpen = false; nav.go(Route.S27Termux) },
+                onStorage = { drawerOpen = false; nav.go(Route.S50StorageDir) },
                 onArchived = { drawerOpen = false; nav.go(Route.S48Archived) },
                 liveSessions = sessions,
                 keyConfigured = apiKey.configured,

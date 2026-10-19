@@ -17,11 +17,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dsh.harness.mobile.ui.components.*
@@ -73,6 +70,10 @@ private val TermPath = Color(0xFFA9B7FF)
 fun S27Termux(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
+    /** v30：真实连接态（dsh ACP 是否已握手），取代假 ":3081 运行中" */
+    connectionReady: Boolean = false,
+    /** v30：真实工作区 cwd，取代假路径 */
+    workspace: String? = null,
     onOpenUi: () -> Unit,
     onStop: () -> Unit,
     onExportLog: () -> Unit,
@@ -81,9 +82,6 @@ fun S27Termux(
     onNewSession: () -> Unit = {},
 ) {
     val c = DshTheme.colors
-    // 当前终端会话：0 = bash·0（dsh web），1 = bash·1（tail 日志）。
-    // 设计稿 S49 脚注：「会话创建后可在终端窗口的会话列表里来回切换」。
-    var session by remember { mutableStateOf(0) }
     var tsxOpen by remember { mutableStateOf(false) }
 
     // tsx Sheet 要盖住整屏（含状态栏）→ S27 自己套 Box：DshScreen 与 Sheet 同级
@@ -133,10 +131,10 @@ fun S27Termux(
                         Box(
                             Modifier
                                 .size(8.dp)
-                                .background(TermOk, RoundedCornerShape(50)),
+                                .background(if (connectionReady) TermOk else TermWarn, RoundedCornerShape(50)),
                         )
                         Text(
-                            "bash · $session",
+                            "终端",
                             style = Type.sec.copy(fontWeight = FontWeight.SemiBold),
                             color = TermTitle,
                             maxLines = 1,
@@ -149,9 +147,9 @@ fun S27Termux(
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                if (session == 0) "dsh web" else "tail",
+                                if (connectionReady) "已连接" else "未连接",
                                 style = Type.meta.copy(fontSize = 9.5.sp),
-                                color = TermOk,
+                                color = if (connectionReady) TermOk else TermWarn,
                                 maxLines = 1,
                             )
                         }
@@ -168,26 +166,33 @@ fun S27Termux(
                         )
                     }
 
-                    // 终端输出（深色等宽）
+                    // 终端输出（深色等宽）：本 App 不直接捕获 Termux 实时输出，
+                    // 这里只呈现真实状态与真实启动命令，不编造会话日志。
                     Column(Modifier.padding(horizontal = 12.dp, vertical = 11.dp)) {
-                        val lines = if (session == 0) TERMINAL_LINES else TERMINAL_TAIL_LINES
-                        lines.forEach { line ->
+                        val outLines = if (connectionReady) listOf(
+                            Pair("$ ", TermPrompt),
+                            Pair("npx @deepseek-ai/dsh web", TermFg),
+                            Pair("[dsh] ", TermKey),
+                            Pair("本地引擎已连接 · 任务进展与轨迹在 Harness 主界面查看", TermFg),
+                        ) else listOf(
+                            Pair("本地引擎未连接", TermWarn),
+                            Pair("在 Termux 中执行 npx @deepseek-ai/dsh web 启动", TermFg),
+                            Pair("本机终端由 Termux 承载，Harness 不直接捕获其实时输出", TermFg),
+                        )
+                        outLines.forEach { (t, tone) ->
+                            val col = when (tone) {
+                                TermPrompt -> TermPrompt
+                                TermOk -> TermOk
+                                TermKey -> TermKey
+                                TermWarn -> TermWarn
+                                TermErr -> TermErr
+                                TermPath -> TermPath
+                                else -> TermFg
+                            }
                             Text(
-                                buildAnnotatedString {
-                                    line.forEach { (t, tone) ->
-                                        val col = when (tone) {
-                                            TermTone.FG -> TermFg
-                                            TermTone.PROMPT -> TermPrompt
-                                            TermTone.OK -> TermOk
-                                            TermTone.KEY -> TermKey
-                                            TermTone.WARN -> TermWarn
-                                            TermTone.ERR -> TermErr
-                                            TermTone.PATH -> TermPath
-                                        }
-                                        withStyle(SpanStyle(color = col)) { append(t) }
-                                    }
-                                },
+                                t,
                                 style = Type.mono.copy(fontSize = 12.sp, lineHeight = 18.sp),
+                                color = col,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -227,10 +232,18 @@ fun S27Termux(
                             color = c.ink,
                             modifier = Modifier.weight(1f),
                         )
-                        DshChip(":3081 运行中", tone = ChipTone.Ok, mini = true)
+                        DshChip(
+                            if (connectionReady) "已连接" else "未连接",
+                            tone = if (connectionReady) ChipTone.Ok else ChipTone.Warn,
+                            mini = true,
+                        )
                     }
-                    TermRow("工作区", "~/storage/shared/Documents/dsh-ws", mono = true)
-                    TermRow("会话存储", "~/.dsh/sessions · SQLite", mono = true)
+                    TermRow(
+                        "工作区",
+                        workspace?.let { it.substringAfterLast('/') } ?: "未选择工作区",
+                        mono = true,
+                    )
+                    TermRow("会话存储", "~/.dsh/sessions", mono = true)
                     Row(
                         Modifier.fillMaxWidth().padding(vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -286,12 +299,10 @@ fun S27Termux(
             }
         }
 
-        // —— 终端会话列表（tsx Sheet）：bash·0 / bash·1 / 新建会话 ——
+        // —— 终端会话列表（tsx Sheet）：新建会话 → S49 ——
         S27SessionSheet(
             visible = tsxOpen,
-            current = session,
             onDismiss = { tsxOpen = false },
-            onSelect = { session = it; tsxOpen = false },
             onNewSession = { tsxOpen = false; onNewSession() },
         )
     }
@@ -340,15 +351,15 @@ private fun TermRow(label: String, value: String, mono: Boolean) {
 }
 
 /**
- * S27 的「终端会话」Sheet（tsx，v20 新增）。
- * 设计稿：bash·0（当前）/ bash·1（tail -f web.log）/ 新建会话 → S49。
+ * S27 的「终端会话」Sheet（tsx，v20 新增，v30 去假数据）。
+ *
+ * v30：本 App 不直接托管 shell 会话，所以不再编造 bash·0 / bash·1 两条假会话。
+ * 只保留「新建会话」入口，并诚实说明会话由 Termux 托管。
  */
 @Composable
 private fun BoxScope.S27SessionSheet(
     visible: Boolean,
-    current: Int,
     onDismiss: () -> Unit,
-    onSelect: (Int) -> Unit,
     onNewSession: () -> Unit,
 ) {
     DshSheet(
@@ -373,28 +384,6 @@ private fun BoxScope.S27SessionSheet(
                     .border(1.dp, DshTheme.colors.line, RoundedCornerShape(Radius.xl)),
             ) {
                 DshMRow(
-                    title = "bash · 0",
-                    subtitle = "dsh web 运行中 · :3081",
-                    icon = DshIcons.ChevronRight,
-                    iconTone = ChipTone.Ok,
-                    trailing = {
-                        if (current == 0) DshChip("当前", tone = ChipTone.Brand, mini = true)
-                    },
-                    onClick = { onSelect(0) },
-                )
-                DshDivider()
-                DshMRow(
-                    title = "bash · 1",
-                    subtitle = "tail -f web.log",
-                    icon = DshIcons.ChevronRight,
-                    iconTone = ChipTone.Neutral,
-                    trailing = {
-                        if (current == 1) DshChip("当前", tone = ChipTone.Brand, mini = true)
-                    },
-                    onClick = { onSelect(1) },
-                )
-                DshDivider()
-                DshMRow(
                     title = "新建会话",
                     subtitle = "选模板与启动参数",
                     icon = DshIcons.Add,
@@ -402,6 +391,15 @@ private fun BoxScope.S27SessionSheet(
                     onClick = onNewSession,
                 )
             }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "本 App 不直接托管 shell 会话；在 Termux 中执行 dsh 命令后，这里显示其状态。",
+                style = Type.meta.copy(lineHeight = 16.8.sp),
+                color = DshTheme.colors.ink3,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+            )
         },
         footer = {
             DshBtn("关闭", tone = BtnTone.Ghost, onClick = onDismiss)
@@ -431,8 +429,11 @@ private data class S49Template(
 fun S49NewTermuxSession(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
+    /** v30：真实工作区 cwd，取代硬编码假路径 */
+    workspace: String? = null,
     onPickWorkspace: () -> Unit = {},
-    onCreate: () -> Unit = {},
+    /** v30：创建时回传真实拼接的启动命令（由 DshApp 复制并提示） */
+    onCreate: (String) -> Unit = {},
 ) {
     val c = DshTheme.colors
     var tpl by remember { mutableStateOf(0) }
@@ -472,6 +473,8 @@ fun S49NewTermuxSession(
                 .padding(horizontal = Space.lg),
         ) {
             Spacer(Modifier.height(12.dp))
+
+            val wsLabel = workspace?.let { it.substringAfterLast('/') } ?: "未选择工作区（去设置选择）"
 
             DshSecTitle("会话模板", Modifier.padding(top = 0.dp))
             Column(
@@ -522,7 +525,7 @@ fun S49NewTermuxSession(
                     },
                 ) {
                     Text(
-                        "~/storage/shared/Documents/dsh-ws",
+                        wsLabel,
                         style = Type.mono.copy(fontSize = 11.5.sp),
                         color = c.ink2,
                         maxLines = 1,
@@ -572,7 +575,7 @@ fun S49NewTermuxSession(
 
             Spacer(Modifier.height(10.dp))
             Text(
-                "端口被占用会直接报错，届时改用 --port 重试；会话创建后可在终端窗口的会话列表里来回切换。",
+                "启动命令会复制到剪贴板，请在 Termux 中执行；本 App 不直接托管 shell 会话。",
                 style = Type.meta.copy(lineHeight = 16.8.sp),
                 color = c.ink3,
             )
@@ -589,7 +592,7 @@ fun S49NewTermuxSession(
                     "创建并进入",
                     icon = DshIcons.Add,
                     modifier = Modifier.weight(1.4f),
-                    onClick = onCreate,
+                    onClick = { onCreate(s49BuildCmd(tpl, profile, args.value, workspace)) },
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -597,43 +600,30 @@ fun S49NewTermuxSession(
     }
 }
 
-/** 终端色调：普通 / 提示符$ / 成功 / [dsh]键 / 警告 / 错误 / 路径高亮 */
-private enum class TermTone { FG, PROMPT, OK, KEY, WARN, ERR, PATH }
-
-/** 一行 = 若干带色调的文本段 */
-private typealias Seg = Pair<String, TermTone>
-
-/** S27 终端输出 · bash·0（dsh web，对应 v20 设计稿 8 行） */
-private val TERMINAL_LINES: List<List<Seg>> = listOf(
-    listOf(Seg("$ ", TermTone.PROMPT), Seg("node -v", TermTone.FG)),
-    listOf(Seg("v22.11.0", TermTone.OK)),
-    listOf(Seg("$ ", TermTone.PROMPT), Seg("npx @deepseek-ai/dsh web", TermTone.FG)),
-    listOf(Seg("[dsh] ", TermTone.KEY), Seg("profile \"web\" 首次启动，按内置模板初始化", TermTone.FG)),
-    listOf(Seg("[dsh] ", TermTone.KEY), Seg("载入 bundle：llm · session · agent · api-gateway · tools · ui", TermTone.FG)),
-    listOf(
-        Seg("[dsh] ", TermTone.KEY), Seg("Web UI 已启动", TermTone.FG),
-        Seg("  http://localhost:3081", TermTone.PATH),
-    ),
-    listOf(
-        Seg("提示", TermTone.WARN), Seg("  默认仅本机可访问；外部访问需 ", TermTone.FG),
-        Seg("--public-url", TermTone.PATH),
-    ),
-    listOf(Seg("$ ", TermTone.PROMPT), Seg("▎", TermTone.PATH)),
-)
-
-/** S27 终端输出 · bash·1（tail -f web.log，tsx 切换后显示） */
-private val TERMINAL_TAIL_LINES: List<List<Seg>> = listOf(
-    listOf(Seg("$ ", TermTone.PROMPT), Seg("tail -f ~/.dsh/logs/web.log", TermTone.FG)),
-    listOf(Seg("[dsh] ", TermTone.KEY), Seg("GET /api/models 200 · 12ms", TermTone.FG)),
-    listOf(Seg("[dsh] ", TermTone.KEY), Seg("session new · 12f4c0 · model=deepseek-v4-flash", TermTone.FG)),
-    listOf(Seg("[dsh] ", TermTone.KEY), Seg("prompt turn 1 · 1,284 tok in / 96 out", TermTone.FG)),
-    listOf(Seg("[dsh] ", TermTone.KEY), Seg("tool bash · ", TermTone.FG), Seg("exit 0", TermTone.OK)),
-    listOf(
-        Seg("[dsh] ", TermTone.KEY), Seg("web ui ready", TermTone.OK),
-        Seg("  http://localhost:3081", TermTone.PATH),
-    ),
-    listOf(Seg("$ ", TermTone.PROMPT), Seg("▎", TermTone.PATH)),
-)
+/**
+ * 拼接 S49「新建终端会话」的真实启动命令。
+ *
+ * - tpl=2 → tail 日志；tpl=3 → htop；其余按 profile 选 dsh 子命令；
+ * - 选中的参数 chips 原样追加；
+ * - 若已选工作区，前置 `cd <工作区>`。
+ * 这些命令都是真实可在 Termux 里执行的，不编造输出。
+ */
+private fun s49BuildCmd(tpl: Int, profile: Int, args: Set<String>, workspace: String?): String {
+    val base = when (tpl) {
+        2 -> "tail -f ~/.dsh/logs/web.log"
+        3 -> "htop"
+        else -> when (profile) {
+            1 -> "npx @deepseek-ai/dsh demo"
+            2 -> "npx @deepseek-ai/dsh --profile headless"
+            else -> "npx @deepseek-ai/dsh web"
+        }
+    }
+    val parts = mutableListOf(base)
+    args.forEach { parts += it }
+    val joined = parts.joinToString(" ")
+    val ws = workspace?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+    return if (ws != null) "cd $ws && $joined" else joined
+}
 
 /** 快捷指令（横滑） */
 private val TERMINAL_QUICK = listOf(

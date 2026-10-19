@@ -25,6 +25,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import com.dsh.harness.SafConfig
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
 
@@ -74,8 +76,14 @@ fun S14Settings(
     onSearch: () -> Unit = {},
     /** v14：本机 Termux 终端入口（用户明确要求保留在设置列表里） */
     onTermux: () -> Unit = {},
+    /** v30：SAF 存储目录桥入口（取代 v29 删掉的 NAS 假页面） */
+    onStorage: () -> Unit = {},
 ) {
     val c = DshTheme.colors
+    // v30：真实读取 SAF 授权态，副标题随真实状态变化（不编"已连"假数值）
+    val ctx = LocalContext.current
+    val safOn = remember { SafConfig.isConfigured(ctx) }
+    val safName = remember { SafConfig.displayName(ctx) }
     var density by remember { mutableStateOf(1) }
     var busyEnter by remember { mutableStateOf(false) }
     var devtools by remember { mutableStateOf(true) }
@@ -222,6 +230,21 @@ fun S14Settings(
                     onClick = onTermux,
                 ) {
                     DshChip(":3081", tone = ChipTone.Ok, mini = true)
+                }
+                DshDivider()
+                // v30：SAF 存储目录桥（取代已删的 NAS 假页面）。副标题反映真实授权态
+                SettingRow(
+                    title = "存储目录",
+                    subtitle = if (safOn) "已挂载：$safName" else "未选择外部存储 · 点此授权",
+                    icon = DshIcons.FolderOpen,
+                    statusDot = if (safOn) StatusDot.Ok else StatusDot.Warn,
+                    onClick = onStorage,
+                ) {
+                    DshChip(
+                        if (safOn) "已挂载" else "去授权",
+                        tone = if (safOn) ChipTone.Ok else ChipTone.Warn,
+                        mini = true,
+                    )
                 }
             }
 

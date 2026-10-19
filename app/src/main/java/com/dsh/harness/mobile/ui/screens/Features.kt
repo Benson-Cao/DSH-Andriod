@@ -22,6 +22,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.dsh.harness.SafConfig
+import com.dsh.harness.SafTree
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
 
@@ -295,19 +301,27 @@ fun S11Workspace(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onOpenDrawer: () -> Unit,
+    /** v30：真实工作区 cwd（来自 DshViewModel.workspace）；null = 还没选 */
+    workspace: String? = null,
     initialTab: Int = 0,
-    /** 将来接上文件读取后从这里传入；现在恒为空 */
-    files: List<FileRow> = emptyList(),
-    diffs: List<DiffLine> = emptyList(),
-    artifacts: List<FileRow> = emptyList(),
     /** v20：顶栏放大镜 → S45 全局搜索 */
     onSearch: () -> Unit = {},
     /** v20：工作区横滑条末尾 add → S41 选择工作区目录 */
     onAddWorkspace: () -> Unit = {},
 ) {
     val c = DshTheme.colors
+    val ctx = LocalContext.current.applicationContext
     var tab by remember { mutableStateOf(initialTab) }
-    var ws by remember { mutableStateOf(0) } // 0=数据分析项目 1=默认工作区 2=DSH 插件开发 3=nas-mount
+
+    // v30：真实读取 SAF 授权态，并拉取已授权目录下的真实文件列表（IO 放到后台）
+    val safOn = remember { SafConfig.isConfigured(ctx) }
+    var safEntries by remember { mutableStateOf<List<SafTree.Entry>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(safOn) {
+        safEntries = if (safOn) {
+            withContext(Dispatchers.IO) { SafTree.list(ctx, "") }
+        } else emptyList()
+    }
 
     DshScreen(modifier) {
         DshNavBar(
@@ -323,7 +337,8 @@ fun S11Workspace(
             },
         )
 
-        // 工作区横滑条（设计稿 v20：四个工作区 chip + nas-mount + add → S41）
+        // 工作区横滑条：真实只有「当前工作区」一个（来自 VM 的 cwd）；
+        // 未选择时给一个入口 chip 引导去 S41 选目录。外部存储若已授权也单列。
         Row(
             Modifier
                 .fillMaxWidth()
@@ -331,10 +346,18 @@ fun S11Workspace(
                 .padding(horizontal = Space.lg, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            listOf("数据分析项目", "默认工作区", "DSH 插件开发").forEachIndexed { i, label ->
-                DshChip(label, tone = if (ws == i) ChipTone.Brand else ChipTone.Neutral, onClick = { ws = i })
+            if (workspace != null) {
+                DshChip(workspace.substringAfterLast('/'), tone = ChipTone.Brand)
+            } else {
+                DshChip("选择工作区", tone = ChipTone.Neutral, onClick = onAddWorkspace)
             }
-            DshChip("nas-mount", icon = DshIcons.Cloud, tone = if (ws == 3) ChipTone.Brand else ChipTone.Neutral, onClick = { ws = 3 })
+            if (safOn) {
+                DshChip(
+                    "外部存储 · " + SafConfig.displayName(ctx),
+                    icon = DshIcons.FolderOpen,
+                    tone = ChipTone.Ok,
+                )
+            }
             DshChip("", icon = DshIcons.Add, onClick = onAddWorkspace)
         }
 
@@ -351,122 +374,61 @@ fun S11Workspace(
                 .padding(top = 10.dp),
         ) {
             when (tab) {
-                0 -> if (files.isEmpty()) {
-                    DshEmpty("工作区里还没有文件", icon = DshIcons.FolderOpen)
-                } else Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.card)
-                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-                ) {
-                    files.forEachIndexed { i, f ->
-                        DshMRow(title = f.name, subtitle = f.meta, icon = f.icon, iconTone = f.tone)
-                        if (i != files.lastIndex) DshDivider()
-                    }
-                }
-
-                1 -> {
-                    // —— Diff 卡：头 + 代码行 + 脚注 ——
-                    Column(
+                // —— 文件：真实优先（SAF 已授权则列真实目录），否则诚实空态 ——
+                0 -> when {
+                    safOn && safEntries.isNotEmpty() -> Column(
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(Radius.xl))
                             .background(c.card)
                             .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
                     ) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .background(c.line2)
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("aggregate.py", style = Type.mono, color = c.ink, modifier = Modifier.weight(1f))
-                            Text("M", style = Type.meta.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = c.warn)
-                            Spacer(Modifier.width(8.dp))
-                            Text("+42 −8", style = Type.meta, color = c.ink3)
-                        }
-                        Column(Modifier.padding(vertical = 6.dp)) {
-                            diffs.forEach { d ->
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            when (d.mark) {
-                                                "+" -> c.okSoft()
-                                                "-" -> c.dangerSoft()
-                                                else -> Color.Transparent
-                                            }
-                                        )
-                                        .padding(horizontal = 10.dp, vertical = 2.dp),
-                                ) {
-                                    // 变更标记定宽 26
-                                    Text(
-                                        d.mark,
-                                        style = Type.mono,
-                                        color = when (d.mark) {
-                                            "+" -> c.ok
-                                            "-" -> c.danger
-                                            else -> c.ink3
-                                        },
-                                        modifier = Modifier.width(16.dp),
-                                    )
-                                    Text(
-                                        d.no.toString(),
-                                        style = Type.mono.copy(fontSize = 10.sp),
-                                        color = c.ink3,
-                                        modifier = Modifier.width(26.dp),
-                                    )
-                                    Text(d.text, style = Type.mono, color = c.ink2)
-                                }
-                            }
-                        }
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .topLine(c.line)
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            DshBtn("暂存", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = {})
-                            DshBtn("丢弃", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = {})
+                        safEntries.forEachIndexed { i, e ->
+                            DshMRow(
+                                title = e.name,
+                                subtitle = if (e.isDir) "文件夹" else fmtSize(e.size),
+                                icon = if (e.isDir) DshIcons.FolderOpen else DshIcons.Article,
+                                iconTone = if (e.isDir) ChipTone.Brand else ChipTone.Neutral,
+                            )
+                            if (i != safEntries.lastIndex) DshDivider()
                         }
                     }
+                    workspace != null -> Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.xl))
+                            .background(c.card)
+                            .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
+                    ) {
+                        DshMRow(
+                            title = workspace.substringAfterLast('/'),
+                            subtitle = workspace,
+                            icon = DshIcons.FolderOpen,
+                            iconTone = ChipTone.Brand,
+                        )
+                    }
+                    else -> DshEmpty("工作区里还没有文件", icon = DshIcons.FolderOpen)
                 }
 
-                2 -> Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.card)
-                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-                ) {
-                    ArtifactRow("Q3数据汇总.pptx", "9 页 · 1.4 MB", DshIcons.Slideshow, ChipTone.Brand)
-                    DshDivider()
-                    ArtifactRow("charts/dept_rank.png", "1280×720 · 218 KB", DshIcons.Image, ChipTone.Purple)
-                    DshDivider()
-                    ArtifactRow("reports/q3_by_dept.csv", "8 行 × 14 列 · 12 KB", DshIcons.TableChart, ChipTone.Ok)
-                }
+                // —— Git 变更：本 harness 无 Git 后端，诚实空态 ——
+                1 -> DshEmpty("暂无 Git 变更记录", icon = DshIcons.Sync)
+
+                // —— 产物：无真实产物数据源，诚实空态 ——
+                2 -> DshEmpty("还没有生成产物", icon = DshIcons.Slideshow)
             }
             Spacer(Modifier.height(8.dp))
         }
     }
 }
 
-data class FileRow(val name: String, val meta: String, val icon: ImageVector, val tone: ChipTone)
-data class DiffLine(val mark: String, val no: Int, val text: String)
-
-@Composable
-private fun ArtifactRow(name: String, meta: String, icon: ImageVector, tone: ChipTone) {
-    DshMRow(
-        title = name,
-        subtitle = meta,
-        icon = icon,
-        iconTone = tone,
-        trailing = { DshChip("打开", tone = tone, mini = true) },
-        onClick = {},
-    )
+/** 字节数 → 人类可读（用于 SAF 文件列表） */
+private fun fmtSize(bytes: Long): String {
+    if (bytes <= 0) return "—"
+    val units = listOf("B", "KB", "MB", "GB")
+    var v = bytes.toDouble()
+    var u = 0
+    while (v >= 1024 && u < units.lastIndex) { v /= 1024; u++ }
+    return "%.1f %s".format(v, units[u])
 }
 
 // ============================ S13 自动化任务 ============================

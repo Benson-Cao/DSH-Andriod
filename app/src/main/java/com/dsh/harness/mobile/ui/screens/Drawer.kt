@@ -49,6 +49,8 @@ fun BoxScope.S4Drawer(
     onAccount: () -> Unit,
     /** v14：本机 Termux 终端入口 */
     onTermux: () -> Unit = {},
+    /** v30：SAF 存储目录桥入口 */
+    onStorage: () -> Unit = {},
     /** v20：会话分组「已归档 · 全部」→ S48 归档管理 */
     onArchived: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -190,6 +192,13 @@ fun BoxScope.S4Drawer(
                 selected = selectedNav == 4,
                 badge = "运行中",
                 onClick = onTermux,
+            )
+
+            NavRow(
+                title = "存储目录",
+                icon = DshIcons.FolderOpen,
+                selected = false,
+                onClick = onStorage,
             )
 
             NavRow(
