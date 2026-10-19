@@ -539,6 +539,8 @@ fun S25Provider(
     onBack: () -> Unit,
     onCancel: () -> Unit = {},
     onCreated: (String) -> Unit = {},
+    /** v20：「添加模型」→ S43 添加模型与推理等级 */
+    onAddModel: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     val ctx = androidx.compose.ui.platform.LocalContext.current.applicationContext
@@ -634,12 +636,13 @@ fun S25Provider(
             }
 
             Spacer(Modifier.height(13.dp))
+            // 设计稿 S25：「添加模型」ghost h40 → S43（声明档位映射后模型菜单才有思考选项）
             DshBtn(
-                text = "添加模型目录项",
+                text = "添加模型",
                 icon = DshIcons.Add,
                 tone = BtnTone.Ghost,
-                small = true,
-                onClick = {},
+                height = 40.dp,
+                onClick = onAddModel,
             )
 
             Spacer(Modifier.height(13.dp))

@@ -49,6 +49,8 @@ fun BoxScope.S4Drawer(
     onAccount: () -> Unit,
     /** v14：本机 Termux 终端入口 */
     onTermux: () -> Unit = {},
+    /** v20：会话分组「已归档 · 全部」→ S48 归档管理 */
+    onArchived: () -> Unit = {},
     modifier: Modifier = Modifier,
     selectedNav: Int = 0,
     /** 来自 ACP session/list 的真实会话；为空时退回设计稿演示数据 */
@@ -130,7 +132,7 @@ fun BoxScope.S4Drawer(
                     modifier = Modifier.padding(start = 24.dp, top = 7.dp, bottom = 7.dp),
                 )
 
-                GroupHeader("已归档", more = "全部")
+                GroupHeader("已归档", more = "全部", onMoreClick = onArchived)
                 SessionRow("认识 DeepSeek Harness", "8/13")
             }
         }
@@ -236,9 +238,9 @@ private fun NavRow(
     }
 }
 
-/** 分组标题 .grp：10.5/600 ink3，字距 .5，内距 14/18/5 */
+/** 分组标题 .grp：10.5/600 ink3，字距 .5，内距 14/18/5；more 可点（S48 已归档入口） */
 @Composable
-private fun GroupHeader(title: String, more: String? = null) {
+private fun GroupHeader(title: String, more: String? = null, onMoreClick: (() -> Unit)? = null) {
     val c = DshTheme.colors
     Row(
         Modifier
@@ -258,7 +260,19 @@ private fun GroupHeader(title: String, more: String? = null) {
         )
         if (more != null) {
             Spacer(Modifier.weight(1f))
-            Text(more, style = Type.meta.copy(fontSize = 10.sp), color = c.ink3.copy(alpha = 0.75f))
+            Text(
+                more,
+                style = Type.meta.copy(fontSize = 10.sp),
+                color = if (onMoreClick != null) c.brand else c.ink3.copy(alpha = 0.75f),
+                modifier = if (onMoreClick != null) {
+                    Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onMoreClick() }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                } else {
+                    Modifier
+                },
+            )
         }
     }
 }

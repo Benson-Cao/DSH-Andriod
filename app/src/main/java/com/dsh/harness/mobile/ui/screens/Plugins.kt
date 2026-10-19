@@ -249,6 +249,12 @@ fun S12Plugins(
     onRefresh: () -> Unit = {},
     onOpenBuiltin: () -> Unit = {},
     onOpenMarket: () -> Unit = {},
+    /** v20：顶栏搜索 → S45 全局搜索 */
+    onSearch: () -> Unit = {},
+    /** v20：配置 tab「创建自己的插件」→ S42 会话式创建 */
+    onCreatePlugin: () -> Unit = {},
+    /** v20：发现 tab 索引源条 → S44 索引源管理 */
+    onAddSource: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var tab by remember { mutableStateOf(0) }
@@ -267,7 +273,7 @@ fun S12Plugins(
             title = "插件",
             stacked = true,
             actions = {
-                DshIBtn(DshIcons.Search, "搜索", onClick = {})
+                DshIBtn(DshIcons.Search, "搜索", onClick = onSearch)
                 DshIBtn(DshIcons.SettingsInputComponent, "插件配置", onClick = { tab = 2 })
             },
         )
@@ -347,7 +353,7 @@ fun S12Plugins(
                         trailing = {
                             Text("添加", style = Type.chip, color = c.brand, fontWeight = FontWeight.SemiBold)
                         },
-                        modifier = Modifier.clickable { onOpenMarket() },
+                        modifier = Modifier.clickable { onAddSource() },
                     )
                     Spacer(Modifier.height(12.dp))
                     DshEmpty("没有可浏览的插件", icon = DshIcons.Search)
@@ -383,6 +389,7 @@ fun S12Plugins(
                         iconTint = c.purple,
                         title = "创建自己的插件",
                         subtitle = "用 JavaScript 扩展工具与指令",
+                        modifier = Modifier.clickable { onCreatePlugin() },
                     )
                 }
             }
@@ -731,6 +738,8 @@ fun S21MarketDiscover(
     plugins: List<MarketPlugin> = emptyList(),
     /** 市场本体是否已安装 */
     marketInstalled: Boolean = false,
+    /** v20：搜索卡 → S45 全局搜索 */
+    onSearch: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var cat by remember { mutableStateOf(0) }
@@ -753,13 +762,14 @@ fun S21MarketDiscover(
                 .padding(horizontal = Space.lg)
                 .padding(top = 10.dp),
         ) {
-            // 搜索卡（设计稿里是静态占位，真接上索引源才可输入）
+            // 搜索卡（设计稿里是静态占位，点它进 S45 全局搜索）
             Row(
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(Radius.xl))
                     .background(c.card)
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                    .clickable { onSearch() }
                     .padding(horizontal = 11.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

@@ -42,6 +42,10 @@ import com.dsh.harness.mobile.ui.theme.*
  * v16 新增 S28：未选工作区时（workspaceChosen=false）输入框置灰、
  * 显示"选择一个工作区开始"，只有选定目录后才能发任务（规则原样保留不放宽）。
  *
+ * v20 新增：右上角**带描边的菜单按钮** → 唤起「本机服务与快捷入口」Sheet
+ * （见 [S3ServiceSheet]）。设计稿原文：右上是服务与快捷入口，管本机进程与开关；
+ * 左上 ☰ 是主导航侧边栏，管会话与工作区，两者职责不同。
+ *
  * 骨架比例（设计稿 §03 规格）：
  *   状态栏 5% ｜ 顶栏 6% ｜ 上留白 7% ｜ Hero 10% ｜ 弹性 18%
  *   ｜ 工作区+模式行 5% ｜ 输入卡 15% ｜ 弹性 30% ｜ 边界脚注 3% ｜ home 4%
@@ -66,12 +70,14 @@ fun S3Home(
     onSend: (String) -> Unit,
     /** 点顶栏状态 chip 时打开诊断（真实日志来自 ACP 客户端） */
     onShowDiagnostics: () -> Unit = {},
+    /** v20：右上角描边菜单按钮 → 「本机服务与快捷入口」Sheet */
+    onOpenServices: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var input by remember { mutableStateOf("") }
 
     DshScreen(modifier) {
-        // —— 顶栏：仅 ☰ + 品牌字标，右侧不放按钮（设计稿明确）——
+        // —— 顶栏：☰ + 品牌字标；右侧 = 引擎状态 chip + v20 描边服务菜单按钮 ——
         DshNavBar(
             noBackFor = "S3 首页（一级页，返回键由侧栏与硬件键承担）",
             leading = {
@@ -94,6 +100,8 @@ fun S3Home(
                     mini = true,
                     onClick = { if (!connectionReady) onShowDiagnostics() },
                 )
+                // v20：右上角带描边菜单按钮（设计稿 border:1px solid var(--line)）
+                SvcMenuBtn(onClick = onOpenServices)
             },
         )
 
@@ -467,6 +475,180 @@ fun BoxScope.S3WorkspaceSheet(
                 style = Type.meta.copy(lineHeight = 18.4.sp),
                 color = c.ink3,
             )
+        },
+    )
+}
+
+/**
+ * v20 右上角描边菜单按钮：视觉 32 + 1px line 描边，触区按 Metrics.IBTN_TOUCH_SLOP 外扩。
+ * 设计稿与普通 ibtn 的唯一区别就是这道描边（`border:1px solid var(--line)`）。
+ */
+@Composable
+private fun SvcMenuBtn(onClick: () -> Unit) {
+    val c = DshTheme.colors
+    Box(
+        Modifier
+            .sizeIn(
+                minWidth = Metrics.IBTN + Metrics.IBTN_TOUCH_SLOP * 2,
+                minHeight = Metrics.IBTN + Metrics.IBTN_TOUCH_SLOP * 2,
+            )
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(Metrics.IBTN)
+                .border(1.dp, c.line, RoundedCornerShape(9.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                DshIcons.Menu, "本机服务与快捷入口",
+                Modifier.size(Metrics.IBTN * 0.5625f),
+                tint = c.ink2,
+            )
+        }
+    }
+}
+
+// ============================ v20 本机服务与快捷入口 Sheet ============================
+
+/**
+ * S3 的「本机服务与快捷入口」Sheet（v20 新增）。
+ *
+ * 设计稿结构：标题行(ads_click + 标题 + dsh 运行中 chip + 关闭)
+ *   → 本机服务·Termux(:3081) / 新建终端会话 / NAS 连接(未连接)
+ *     / 导出数据与脱敏日志 / 用量与账单 / 显示代码工作视图(switch)
+ *   → 职责说明脚注 → footer：关闭 + 全部设置。
+ *
+ * 与左上 ☰ 的分工（设计稿原文）：右上是服务与快捷入口，管本机进程与开关；
+ * 左上侧边栏管会话与工作区。
+ */
+@Composable
+fun BoxScope.S3ServiceSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    serviceRunning: Boolean = true,
+    servicePort: String = ":3081",
+    nasConnected: Boolean = false,
+    codeViewOn: Boolean = true,
+    onCodeViewChange: (Boolean) -> Unit = {},
+    onTermux: () -> Unit = {},
+    onNewSession: () -> Unit = {},
+    onNas: () -> Unit = {},
+    onExport: () -> Unit = {},
+    onUsage: () -> Unit = {},
+    onAllSettings: () -> Unit = {},
+) {
+    val c = DshTheme.colors
+    DshSheet(
+        visible = visible,
+        onDismiss = onDismiss,
+        header = {
+            DshSheetHeader(
+                title = "本机服务与快捷入口",
+                icon = DshIcons.AdsClick,
+                iconTint = c.brand,
+                trailing = {
+                    if (serviceRunning) {
+                        DshChip("dsh 运行中", tone = ChipTone.Ok, mini = true)
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    DshIBtn(DshIcons.Close, "关闭", onClick = onDismiss)
+                },
+            )
+        },
+        content = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(c.card)
+                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
+            ) {
+                DshMRow(
+                    title = "本机服务 · Termux",
+                    subtitle = "dsh web 运行状态、日志与终端会话",
+                    icon = DshIcons.Memory,
+                    iconTone = ChipTone.Purple,
+                    trailing = {
+                        if (serviceRunning) {
+                            DshChip(servicePort, tone = ChipTone.Ok, mini = true)
+                        } else {
+                            DshChip("未运行", tone = ChipTone.Neutral, mini = true)
+                        }
+                    },
+                    onClick = onTermux,
+                )
+                DshDivider()
+                DshMRow(
+                    title = "新建终端会话",
+                    subtitle = "选模板与启动参数",
+                    icon = DshIcons.Add,
+                    chevron = true,
+                    onClick = onNewSession,
+                )
+                DshDivider()
+                DshMRow(
+                    title = "NAS 连接",
+                    subtitle = "未连接 · 可作工作区来源或备份目标",
+                    icon = DshIcons.Dns,
+                    iconTone = ChipTone.Neutral,
+                    trailing = {
+                        DshChip(
+                            if (nasConnected) "已连接" else "未连接",
+                            tone = if (nasConnected) ChipTone.Ok else ChipTone.Warn,
+                            mini = true,
+                        )
+                    },
+                    onClick = onNas,
+                )
+                DshDivider()
+                DshMRow(
+                    title = "导出数据与脱敏日志",
+                    icon = DshIcons.FileDownload,
+                    iconTone = ChipTone.Neutral,
+                    chevron = true,
+                    onClick = onExport,
+                )
+                DshDivider()
+                DshMRow(
+                    title = "用量与账单",
+                    icon = DshIcons.QueryBuilder,
+                    iconTone = ChipTone.Neutral,
+                    chevron = true,
+                    onClick = onUsage,
+                )
+                DshDivider()
+                DshMRow(
+                    title = "显示代码工作视图",
+                    subtitle = "开启后会话页才有「轨迹」标签",
+                    trailing = { DshSwitch(codeViewOn) { onCodeViewChange(it) } },
+                )
+            }
+
+            Text(
+                "右上是「服务与快捷入口」，左上是主导航侧边栏，两者职责不同：" +
+                    "前者管本机进程与开关，后者管会话与工作区。",
+                style = Type.meta.copy(lineHeight = 17.6.sp),
+                color = c.ink3,
+                modifier = Modifier.padding(top = 11.dp),
+            )
+        },
+        footer = {
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                DshBtn(
+                    "关闭",
+                    tone = BtnTone.Ghost,
+                    modifier = Modifier.weight(1f),
+                    onClick = onDismiss,
+                )
+                DshBtn(
+                    "全部设置",
+                    icon = DshIcons.Settings,
+                    modifier = Modifier.weight(1.2f),
+                    onClick = onAllSettings,
+                )
+            }
         },
     )
 }

@@ -3,6 +3,7 @@ package com.dsh.harness.mobile.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -299,9 +300,14 @@ fun S11Workspace(
     files: List<FileRow> = emptyList(),
     diffs: List<DiffLine> = emptyList(),
     artifacts: List<FileRow> = emptyList(),
+    /** v20：顶栏放大镜 → S45 全局搜索 */
+    onSearch: () -> Unit = {},
+    /** v20：工作区横滑条末尾 add → S41 选择工作区目录 */
+    onAddWorkspace: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var tab by remember { mutableStateOf(initialTab) }
+    var ws by remember { mutableStateOf(0) } // 0=数据分析项目 1=默认工作区 2=DSH 插件开发 3=nas-mount
 
     DshScreen(modifier) {
         DshNavBar(
@@ -311,26 +317,25 @@ fun S11Workspace(
             onBack = onBack,
             title = "工作区",
             actions = {
+                DshIBtn(DshIcons.Search, "搜索", onClick = onSearch)
                 DshIBtn(DshIcons.MoreVert, "更多", onClick = {})
                 DshIBtn(DshIcons.Menu, "侧边栏", onClick = onOpenDrawer)
             },
         )
 
-        // 工作区横滑条
+        // 工作区横滑条（设计稿 v20：四个工作区 chip + nas-mount + add → S41）
         Row(
             Modifier
                 .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = Space.lg, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            // 设计稿 .ws-pill{max-width:150px}：不能用 weight(1f) 撑满，
-            // 否则胶囊会横贯整屏（真机复现）。用 widthIn 上限 + Spacer 占位。
-            DshWsPill(
-                label = "默认工作区",
-                icon = DshIcons.FolderOpen,
-                modifier = Modifier.widthIn(max = 170.dp),
-            ) {}
-            DshChip("3 项变更", tone = ChipTone.Warn, mini = true)
+            listOf("数据分析项目", "默认工作区", "DSH 插件开发").forEachIndexed { i, label ->
+                DshChip(label, tone = if (ws == i) ChipTone.Brand else ChipTone.Neutral, onClick = { ws = i })
+            }
+            DshChip("nas-mount", icon = DshIcons.Cloud, tone = if (ws == 3) ChipTone.Brand else ChipTone.Neutral, onClick = { ws = 3 })
+            DshChip("", icon = DshIcons.Add, onClick = onAddWorkspace)
         }
 
         Column(Modifier.padding(horizontal = Space.lg).padding(top = 10.dp)) {
@@ -478,6 +483,8 @@ fun S13Automation(
     onBack: () -> Unit,
     /** 将来接上任务调度后传入；空列表走空态，不用假任务冒充 */
     tasks: List<AutomationTask> = emptyList(),
+    /** v20：顶栏加号 → S40 新建自动化任务 */
+    onNewTask: () -> Unit = {},
 ) {
     val c = DshTheme.colors
 
@@ -486,7 +493,7 @@ fun S13Automation(
             onBack = onBack,
             title = "自动化任务",
             stacked = true,
-            actions = { DshIBtn(DshIcons.Add, "新建任务", onClick = {}) },
+            actions = { DshIBtn(DshIcons.Add, "新建任务", onClick = onNewTask) },
         )
 
         if (tasks.isEmpty()) {

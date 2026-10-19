@@ -31,9 +31,21 @@ import com.dsh.harness.mobile.ui.theme.*
 // ============================ S14 设置 ============================
 
 /**
- * S14 设置
- * 布局：通用组 18%(3 行) ｜ 模型组 14%(2 行) ｜ 预设组 10% ｜ 开发者工具 7% ｜ 版本脚注 3%
- *   "组标题用 11.5px 大字距；行内分段控件定宽 150px"
+ * S14 设置（v20 重构）
+ *
+ * v20 设计稿结构（原 3291 行稿 1749–1788 行）：
+ *   通用 2 行 ｜ **模型 5 行**（DeepSeek 账号→S31 / 账号与余额→S32·S15 /
+ *   默认模型与思考强度→S30 / API 密钥→S37·S24 / 自定义提供方→S25）｜
+ *   Agent 预设 1 行→S33 ｜ 开发者工具（三合一）｜ 存储与同步 NAS→S34·S16 ｜
+ *   顶栏搜索→S45
+ *
+ * 与交付版的差异（都遵循诚实性原则）：
+ *  1. 通用组保留原 3 行 —— v20 把「展示档位 + 繁忙 Enter」合并成一行
+ *     「工作过程展示」，但合并会弄丢可用的分段控件与开关，且设计稿的
+ *     S14b 子页并不存在，故不做纯装饰性合并；
+ *  2. 账号/NAS 两行的副标题与 chip 按**真实登录态/连接态**渲染，
+ *     不显示设计稿的演示数值（「2 个提供方」「1 个已连」）；
+ *  3. 「本机服务 · Termux」行按用户明确要求保留在开发者工具组。
  */
 @Composable
 fun S14Settings(
@@ -41,12 +53,29 @@ fun S14Settings(
     onBack: () -> Unit,
     dark: Boolean = false,
     onToggleDark: (Boolean) -> Unit,
-    onNas: () -> Unit,
+    /** 是否已登录 DeepSeek 账号。无真实登录态，默认 false → 行走诚实空态 */
+    accountLoggedIn: Boolean = false,
+    /** NAS 是否已连接。默认 false → S34 空态 */
+    nasConnected: Boolean = false,
+    /** DeepSeek 账号行：未登录 → S31 登录；已登录 → S15 账号与余额 */
     onAccount: () -> Unit,
+    /** 账号与余额行：未登录 → S32；已登录 → S15 */
+    onBalance: () -> Unit,
     /** 密钥是否已配置（只读存在性）。S14「模型」组的密钥状态点用它。 */
     apiKeyConfigured: Boolean = false,
-    onApiKey: () -> Unit = {},
-    /** v14：本机 Termux 终端入口 */
+    /** API 密钥行：未配置 → S24 首次配置；已配置 → S37 已配置态 */
+    onApiKey: () -> Unit,
+    /** 默认模型与思考强度 → S30 */
+    onModelDefault: () -> Unit,
+    /** 自定义提供方 → S25 新建提供方表单 */
+    onAddProvider: () -> Unit,
+    /** Agent 预设 → S33 */
+    onPresets: () -> Unit,
+    /** NAS 连接行：未连接 → S34；已连接 → S16 */
+    onNas: () -> Unit,
+    /** v20：顶栏搜索 → S45 全局搜索 */
+    onSearch: () -> Unit = {},
+    /** v14：本机 Termux 终端入口（用户明确要求保留在设置列表里） */
     onTermux: () -> Unit = {},
 ) {
     val c = DshTheme.colors
@@ -55,7 +84,12 @@ fun S14Settings(
     var devtools by remember { mutableStateOf(true) }
 
     DshScreen(modifier) {
-        DshNavBar(onBack = onBack, title = "设置", stacked = true)
+        DshNavBar(
+            onBack = onBack,
+            title = "设置",
+            stacked = true,
+            actions = { DshIBtn(DshIcons.Search, "搜索", onClick = onSearch) },
+        )
 
         Column(
             Modifier
@@ -91,65 +125,97 @@ fun S14Settings(
 
             DshSecTitle("模型", note = "密钥只写不回读")
             SettingsGroup {
+                // 1. DeepSeek 账号 → S31
                 SettingRow(
                     title = "DeepSeek 账号",
-                    subtitle = "账号额度直接跑任务",
+                    subtitle = if (accountLoggedIn) "账号额度直接跑任务"
+                    else "未登录 · 登录后用账号额度跑任务",
                     icon = DshIcons.Bolt,
+                    statusDot = if (accountLoggedIn) StatusDot.Ok else StatusDot.Warn,
                     onClick = onAccount,
-                )
+                ) {
+                    DshChip(
+                        if (accountLoggedIn) "已连接" else "去登录",
+                        tone = if (accountLoggedIn) ChipTone.Ok else ChipTone.Warn,
+                        mini = true,
+                    )
+                }
                 DshDivider()
+                // 2. 账号与余额 → S32（未登录）/ S15（已登录）
+                SettingRow(
+                    title = "账号与余额",
+                    subtitle = if (accountLoggedIn) "账号额度直接跑任务"
+                    else "未登录 · 用 API Key 跑任务",
+                    icon = DshIcons.AccountBalanceWallet,
+                    onClick = onBalance,
+                ) {
+                    DshChip(
+                        if (accountLoggedIn) "已登录" else "未登录",
+                        tone = if (accountLoggedIn) ChipTone.Ok else ChipTone.Warn,
+                        mini = true,
+                    )
+                }
+                DshDivider()
+                // 3. 默认模型与思考强度 → S30
+                SettingRow(
+                    title = "默认模型与思考强度",
+                    subtitle = "DeepSeek-V4-Flash · 高",
+                    icon = DshIcons.AutoFixHigh,
+                    onClick = onModelDefault,
+                ) {
+                    DshChip("更改", tone = ChipTone.On, mini = true)
+                }
+                DshDivider()
+                // 4. API 密钥 → S37（已配置）/ S24（未配置）
                 SettingRow(
                     title = "API 密钥",
                     subtitle = if (apiKeyConfigured)
-                        "deepseek-official · 已配置"
+                        "deepseek-official · 已配置 · 只写不回读"
                     else
                         "deepseek-official · 未配置",
                     icon = DshIcons.VpnKey,
-                    /** 设计稿 S14：标题右侧带一个 6px 状态点，"避免跑到二级页才发现没配 Key" */
                     statusDot = if (apiKeyConfigured) StatusDot.Ok else StatusDot.Warn,
                     onClick = onApiKey,
-                )
-                DshDivider()
-                SettingRow("默认模型", "V4-Flash", onClick = {}) {
-                    DshChip("更改", tone = ChipTone.On, mini = true)
+                ) {
+                    DshChip(
+                        if (apiKeyConfigured) "已配置" else "未配置",
+                        tone = if (apiKeyConfigured) ChipTone.Ok else ChipTone.Warn,
+                        mini = true,
+                    )
                 }
                 DshDivider()
-                SettingRow("思考强度", "高 · 复杂任务更稳", onClick = {}) {
-                    DshChip("更改", tone = ChipTone.On, mini = true)
+                // 5. 自定义提供方 → S25（真实提供方数为 0，不显示设计稿的「2 个」）
+                SettingRow(
+                    title = "自定义提供方",
+                    subtitle = "尚未添加 · 手动录入需声明推理等级",
+                    icon = DshIcons.VpnKey,
+                    statusDot = StatusDot.Warn,
+                    onClick = onAddProvider,
+                ) {
+                    DshChip("去添加", tone = ChipTone.Warn, mini = true)
                 }
             }
 
-            DshSecTitle("预设", note = "1 个")
+            DshSecTitle("Agent 预设", note = "1 个")
             SettingsGroup {
-                SettingRow("工作过程密度", "关键细节 · 只展示重要步骤", onClick = {}) {
-                    DshChip("修改", tone = ChipTone.On, mini = true)
+                SettingRow(
+                    title = "预设 · 标准模式",
+                    subtitle = "另有 PTC / 极简 / 创造 · 运行后锁定不可切换",
+                    icon = DshIcons.Build,
+                    onClick = onPresets,
+                ) {
+                    DshChip("当前", tone = ChipTone.Brand, mini = true)
                 }
-            }
-
-            DshSecTitle("存储与同步")
-            SettingsGroup {
-                SettingRow(
-                    title = "NAS 连接",
-                    subtitle = "未连接",
-                    icon = DshIcons.Dns,
-                    onClick = onNas,
-                )
-                DshDivider()
-                SettingRow(
-                    title = "账号与余额",
-                    // 余额来自账号登录态；未登录时不该显示一个编造的金额
-                    subtitle = "未登录 · 用 API Key 跑任务",
-                    icon = DshIcons.AccountTree,
-                    onClick = onAccount,
-                )
             }
 
             DshSecTitle("开发者工具")
             SettingsGroup {
-                SettingRow("启用调试开关", "显示诊断页与端口状态") {
+                // v20 设计稿：开发者工具（三合一）单行 + 开关
+                SettingRow("开发者工具（三合一）", "会话原始日志 · 双向定位 · 内嵌 Host 调试") {
                     DshSwitch(devtools) { devtools = it }
                 }
                 DshDivider()
+                // 用户明确要求保留：本机服务 · Termux
                 SettingRow(
                     title = "本机服务 · Termux",
                     subtitle = "在 Termux 里拉起 dsh web",
@@ -157,6 +223,25 @@ fun S14Settings(
                     onClick = onTermux,
                 ) {
                     DshChip(":3081", tone = ChipTone.Ok, mini = true)
+                }
+            }
+
+            DshSecTitle("存储与同步")
+            SettingsGroup {
+                SettingRow(
+                    title = "NAS 连接",
+                    subtitle = if (nasConnected)
+                        "群晖 DS920+ · WebDAV · 可挂载为工作区来源"
+                    else
+                        "未连接",
+                    icon = DshIcons.Dns,
+                    onClick = onNas,
+                ) {
+                    DshChip(
+                        if (nasConnected) "1 个已连" else "未连接",
+                        tone = if (nasConnected) ChipTone.Ok else ChipTone.Warn,
+                        mini = true,
+                    )
                 }
             }
 
@@ -260,6 +345,16 @@ fun S15Account(
     balance: String? = null,
     /** 已配置的模型提供方 */
     providers: List<ProviderItem> = emptyList(),
+    /** v20：充值 → S36 */
+    onTopUp: () -> Unit = {},
+    /** v20：明细 → S35 用量与账单 */
+    onUsage: () -> Unit = {},
+    /** v20：退出登录 → S38 二次确认 Sheet（由调用方挂） */
+    onLogout: () -> Unit = {},
+    /** v20：添加提供方 → S25 新建提供方表单 */
+    onAddProvider: () -> Unit = {},
+    /** v20：提供方行 → S39 编辑模型提供方 */
+    onEditProvider: () -> Unit = {},
 ) {
     val c = DshTheme.colors
 
@@ -330,8 +425,8 @@ fun S15Account(
                 }
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    DshBtn("充值", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = {})
-                    DshBtn("明细", small = true, modifier = Modifier.weight(1f), onClick = {})
+                    DshBtn("充值", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onTopUp)
+                    DshBtn("明细", small = true, modifier = Modifier.weight(1f), onClick = onUsage)
                 }
             }
 
@@ -389,19 +484,19 @@ fun S15Account(
 
             Spacer(Modifier.height(12.dp))
 
-            DshSecTitle("模型提供方", Modifier.padding(top = 0.dp), note = "2 个")
+            DshSecTitle("模型提供方", Modifier.padding(top = 0.dp), note = if (providers.isEmpty()) null else "${providers.size} 个")
             if (providers.isEmpty()) {
                 DshEmpty("还没有配置模型提供方", icon = DshIcons.AccountTree)
             } else {
                 SettingsGroup {
                     providers.forEachIndexed { i, pv ->
-                        SettingRow(pv.name, pv.desc, onClick = {}) {}
+                        SettingRow(pv.name, pv.desc, onClick = onEditProvider) {}
                         if (i != providers.lastIndex) DshDivider()
                     }
                 }
             }
             Spacer(Modifier.height(10.dp))
-            DshBtn("添加提供方", icon = DshIcons.Add, tone = BtnTone.Ghost, onClick = {})
+            DshBtn("添加提供方", icon = DshIcons.Add, tone = BtnTone.Ghost, onClick = onAddProvider)
 
             Spacer(Modifier.height(16.dp))
             // 退出登录降为文字链，不做成按钮 —— 避免误触
@@ -411,7 +506,7 @@ fun S15Account(
                 color = c.danger,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { }
+                    .clickable { onLogout() }
                     .padding(vertical = 10.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )

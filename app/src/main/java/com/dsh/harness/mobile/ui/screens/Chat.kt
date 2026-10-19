@@ -205,13 +205,15 @@ fun DshToolRow(
 
 enum class ToolStatus { Done, Running, Fail, Wait }
 
-/** 思考折叠块 .fold：标题行可点，展开后缩进显示正文 */
+/** 思考折叠块 .fold：标题行可点，展开后缩进显示正文。
+ * [trailing] 挂标题行右侧的弱化补充（设计稿 S42「判断为 UI 侧插件」）。 */
 @Composable
 fun DshFold(
     title: String,
     detail: String,
     modifier: Modifier = Modifier,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    trailing: (@Composable () -> Unit)? = null,
     initiallyOpen: Boolean = false,
 ) {
     val c = DshTheme.colors
@@ -238,6 +240,10 @@ fun DshFold(
                 Icon(icon, null, Modifier.size(14.dp), tint = c.ink3.copy(alpha = 0.8f))
             }
             Text(title, style = Type.sec, color = c.ink3, maxLines = 1)
+            if (trailing != null) {
+                Spacer(Modifier.weight(1f))
+                trailing()
+            }
         }
         if (open) {
             Text(

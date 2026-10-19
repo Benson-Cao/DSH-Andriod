@@ -136,6 +136,31 @@ object DshIcons {
     val Forum = Icons.Filled.Forum
     val Lan = Icons.Filled.Lan
 
+    // —— v20 新增屏（S30–S49 / S3 svc Sheet）——
+    val Person = Icons.Filled.Person
+    val TrendingUp = Icons.Filled.TrendingUp
+    val FlashOn = Icons.Filled.FlashOn
+    val Logout = Icons.Filled.Logout
+    val RemoveCircleOutline = Icons.Outlined.RemoveCircleOutline
+    val PauseCircleOutline = Icons.Outlined.PauseCircleOutline
+    val Save = Icons.Filled.Save
+    val History = Icons.Filled.History
+    val NetworkCheck = Icons.Filled.NetworkCheck
+    val Chat = Icons.Filled.Chat
+    val AccountBalance = Icons.Filled.AccountBalance
+    val ReceiptLong = Icons.Filled.ReceiptLong
+    val FolderShared = Icons.Filled.FolderShared
+    val Inventory2 = Icons.Filled.Inventory2
+    val DataObject = Icons.Filled.DataObject
+    val Minimize = Icons.Filled.Minimize
+    val Source = Icons.Filled.Source
+    val AdsClick = Icons.Filled.AdsClick
+    val QueryBuilder = Icons.Filled.QueryBuilder
+    val RadioButtonChecked = Icons.Filled.RadioButtonChecked
+    val RadioButtonUnchecked = Icons.Outlined.RadioButtonUnchecked
+    // v20 S14「默认模型与思考强度」行
+    val AutoFixHigh = Icons.Filled.AutoFixHigh
+
     /** 允许调用方按名字动态取图标（S8 时间线那种用字符串的场合） */
     fun byName(name: String): ImageVector? = when (name) {
         "bolt" -> Bolt; "science" -> Science; "tune" -> Tune; "build" -> Build

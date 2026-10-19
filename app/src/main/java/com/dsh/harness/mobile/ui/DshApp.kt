@@ -77,10 +77,37 @@ sealed interface Route {
     data object S14ApiKey : Route
     // v14 新增：本机 Termux 终端（入口挂 S4 侧栏与 S14 设置）
     data object S27Termux : Route
+
+    // —— v20 新增 S30–S49（账号与模型集群 / 动作落地页）——
+    data object S30ModelDefault : Route      // 默认模型与思考强度
+    data object S31AccountLogin : Route      // DeepSeek 账号登录
+    data object S32AccountLoggedOut : Route  // 账号与余额 · 未登录
+    data object S33AgentPresets : Route      // Agent 预设列表
+    data object S34NasEmpty : Route          // NAS · 未连接空态
+    data object S35Usage : Route             // 用量与账单明细
+    data object S36TopUp : Route             // 充值
+    data object S37ApiKeyConfigured : Route  // API 密钥 · 已配置态
+    data object S39ProviderEdit : Route      // 编辑模型提供方
+    data object S40NewTask : Route           // 新建自动化任务
+    data object S41PickFolder : Route        // 选择工作区目录
+    data object S42CreatePlugin : Route      // 创造模式创建插件
+    data object S43AddModel : Route          // 添加模型与推理等级
+    data object S44IndexSource : Route       // 索引源与市场管理
+    data object S45GlobalSearch : Route      // 全局搜索
+    data object S46Export : Route            // 数据导出
+    data object S47GitCommit : Route         // Git 提交
+    data object S48Archived : Route          // 归档会话
+    data object S49NewTermuxSession : Route  // Termux 新建终端会话
 }
 
 /** 浮动层（Sheet），独立于路由栈 */
-private enum class SheetKind { None, Workspace, NewSession, More, Approval, Diagnostics, InstallConfirm, Model }
+private enum class SheetKind {
+    None, Workspace, NewSession, More, Approval, Diagnostics, InstallConfirm, Model,
+    /** v20：S3 右上角「本机服务与快捷入口」 */
+    Service,
+    /** v20：S38 退出登录二次确认 */
+    Logout,
+}
 
 /**
  * 导航栈：从哪来回哪去。
@@ -125,6 +152,12 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     var sheet by remember { mutableStateOf(SheetKind.None) }
     var drawerOpen by remember { mutableStateOf(false) }
     var dark by remember { mutableStateOf(false) }
+
+    // —— 全局登录态 / 连接态（无真实登录体系，默认 false → 各屏走诚实空态）——
+    var accountLoggedIn by remember { mutableStateOf(false) }
+    var nasConnected by remember { mutableStateOf(false) }
+    // svc Sheet 的「代码视图」开关（S3 首页与 Sheet 共享，提升到根）
+    var codeViewOn by remember { mutableStateOf(true) }
 
     // 冷启动即拉起本地 dsh ACP 进程并握手
     LaunchedEffect(Unit) { vm.connect() }
@@ -207,7 +240,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 when (r) {
                     Route.S24FirstKey -> S24OnboardingKey(
                         onNext = { nav.go(Route.S1Purpose) },
-                        onUseBalance = { nav.go(Route.S1Purpose) },
+                        // 设计稿 S24：用 DeepSeek 账号登录 → S31 登录页
+                        onUseBalance = { nav.go(Route.S31AccountLogin) },
                         onAddProvider = { nav.go(Route.S25Provider) },
                         onToggleDark = { dark = !dark },
                         onCopyPlatform = {
@@ -221,7 +255,9 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     Route.S25Provider -> S25Provider(
                         onBack = { nav.go(Route.S24FirstKey) },
                         onCancel = { nav.go(Route.S24FirstKey) },
-                        onCreated = { nav.go(Route.S1Purpose) },
+                        // 设计稿：创建提供方后落 S37 已配置态
+                        onCreated = { nav.go(Route.S37ApiKeyConfigured) },
+                        onAddModel = { nav.go(Route.S43AddModel) },
                     )
 
                     Route.S1Purpose -> S1OnboardingPurpose(
@@ -256,6 +292,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                             nav.go(Route.S5ChatRunning)
                         },
                         onShowDiagnostics = { sheet = SheetKind.Diagnostics },
+                        // v20：右上角描边菜单按钮 → 「本机服务与快捷入口」Sheet
+                        onOpenServices = { sheet = SheetKind.Service },
                     )
 
                     Route.S5ChatRunning -> S5ChatRunning(
@@ -304,6 +342,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         // 设计稿 S11 顶栏是「返回 + ☰ 入口」；用户要求此处用返回
                         onBack = { nav.backOrHome() },
                         onOpenDrawer = { drawerOpen = true },
+                        onSearch = { nav.go(Route.S45GlobalSearch) },
+                        onAddWorkspace = { nav.go(Route.S41PickFolder) },
                     )
 
                     Route.S12Plugins -> S12Plugins(
@@ -314,6 +354,9 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onRefresh = { vm.refreshCatalog() },
                         onOpenBuiltin = { nav.go(Route.S19BuiltinPlugins) },
                         onOpenMarket = { nav.go(Route.S21MarketDiscover) },
+                        onSearch = { nav.go(Route.S45GlobalSearch) },
+                        onCreatePlugin = { nav.go(Route.S42CreatePlugin) },
+                        onAddSource = { nav.go(Route.S44IndexSource) },
                     )
 
                     // —— v11 插件生态：官方内置 ——
@@ -340,6 +383,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onOpenThemes = { nav.go(Route.S23MarketInstalled) },
                         plugins = marketPlugins,
                         marketInstalled = marketInstalled,
+                        onSearch = { nav.go(Route.S45GlobalSearch) },
                     )
 
                     is Route.S22MarketDetail -> {
@@ -365,16 +409,36 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onExportLog = { toast = vm.exportRedactedLog() },
                     )
 
-                    Route.S13Automation -> S13Automation(onBack = { nav.backOrHome() })
+                    Route.S13Automation -> S13Automation(
+                        onBack = { nav.backOrHome() },
+                        onNewTask = { nav.go(Route.S40NewTask) },
+                    )
 
                     Route.S14Settings -> S14Settings(
                         onBack = { nav.backOrHome() },
                         dark = dark,
                         onToggleDark = { dark = it },
-                        onNas = { nav.go(Route.S16Nas) },
-                        onAccount = { nav.go(Route.S15Account) },
+                        accountLoggedIn = accountLoggedIn,
+                        nasConnected = nasConnected,
+                        onAccount = {
+                            // 未登录进 S31 登录页；已登录进 S15 账号与余额
+                            nav.go(if (accountLoggedIn) Route.S15Account else Route.S31AccountLogin)
+                        },
+                        onBalance = {
+                            nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
+                        },
                         apiKeyConfigured = apiKey.ok,
-                        onApiKey = { nav.go(Route.S14ApiKey) },
+                        onApiKey = {
+                            // 已配置 → S37 已配置态；未配置 → S24 首次配置（本 App 的密钥录入屏）
+                            nav.go(if (apiKey.ok) Route.S37ApiKeyConfigured else Route.S14ApiKey)
+                        },
+                        onModelDefault = { nav.go(Route.S30ModelDefault) },
+                        onAddProvider = { nav.go(Route.S25Provider) },
+                        onPresets = { nav.go(Route.S33AgentPresets) },
+                        onNas = {
+                            nav.go(if (nasConnected) Route.S16Nas else Route.S34NasEmpty)
+                        },
+                        onSearch = { nav.go(Route.S45GlobalSearch) },
                         onTermux = { nav.go(Route.S27Termux) },
                     )
 
@@ -388,16 +452,196 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onRefresh = { vm.refreshApiKey() },
                     )
 
-                    Route.S15Account -> S15Account(onBack = { nav.backOrHome() })
+                    Route.S15Account -> S15Account(
+                        onBack = { nav.backOrHome() },
+                        onTopUp = { nav.go(Route.S36TopUp) },
+                        onUsage = { nav.go(Route.S35Usage) },
+                        onLogout = { sheet = SheetKind.Logout },
+                        onAddProvider = { nav.go(Route.S25Provider) },
+                        onEditProvider = { nav.go(Route.S39ProviderEdit) },
+                    )
 
                     Route.S27Termux -> S27Termux(
                         onBack = { nav.backOrHome() },
                         onOpenUi = { toast = "已在浏览器打开 dsh web（本机 3081）" },
                         onStop = { toast = "服务已停止，会话日志保留" },
-                        onExportLog = { toast = vm.exportRedactedLog() },
+                        // 设计稿 S27：日志行导出 → S46 数据导出
+                        onExportLog = { nav.go(Route.S46Export) },
                         onCopyCommand = { cmd ->
                             copyText(ctx, cmd)
                             toast = "已复制 $cmd"
+                        },
+                        onNewSession = { nav.go(Route.S49NewTermuxSession) },
+                    )
+
+                    // —— v20 S30–S39：账号与模型集群 ——
+                    Route.S30ModelDefault -> S30ModelDefault(
+                        onBack = { nav.backOrHome() },
+                        currentModel = modelName,
+                        currentThinking = thinking,
+                        onSave = { m, t ->
+                            vm.setModelDisplay(m, t)
+                            toast = "默认模型已设为 $m · $t"
+                            nav.backOrHome()
+                        },
+                        onRestoreDefault = { toast = "已恢复默认模型与思考强度" },
+                    )
+
+                    Route.S31AccountLogin -> S31AccountLogin(
+                        onBack = { nav.backOrHome() },
+                        onCancelLogin = { nav.backOrHome() },
+                        // 设计稿 S31：翻真后落 S15 账号与余额（本 App 无真实登录 → 只演示路径）
+                        onOpenApp = {
+                            accountLoggedIn = true
+                            nav.go(Route.S15Account)
+                        },
+                        onGoKey = { nav.go(Route.S14ApiKey) },
+                    )
+
+                    Route.S32AccountLoggedOut -> S32AccountLoggedOut(
+                        onBack = { nav.backOrHome() },
+                        onLogin = { nav.go(Route.S31AccountLogin) },
+                        onTopUpBlocked = { toast = "登录后才能充值" },
+                        onUsage = { nav.go(Route.S35Usage) },
+                        onAddProvider = { nav.go(Route.S25Provider) },
+                    )
+
+                    Route.S33AgentPresets -> S33AgentPresets(
+                        onBack = { nav.backOrHome() },
+                        onNewPreset = { nav.go(Route.S40NewTask) },
+                        onEditPreset = { toast = "预设编辑将在后续版本开放" },
+                        onUsePreset = { nav.go(Route.S40NewTask) },
+                        onDuplicate = { toast = "已复制预设副本" },
+                    )
+
+                    Route.S34NasEmpty -> S34NasEmpty(
+                        onBack = { nav.backOrHome() },
+                        onConnect = { nav.go(Route.S17NasForm) },
+                    )
+
+                    Route.S35Usage -> S35Usage(
+                        onBack = { nav.backOrHome() },
+                        onExport = { nav.go(Route.S46Export) },
+                        onOpenSession = { nav.go(Route.S5ChatRunning) },
+                    )
+
+                    Route.S36TopUp -> S36TopUp(
+                        onBack = { nav.backOrHome() },
+                        onPay = { toast = "支付通道未接入 · 演示页" },
+                        onTransfer = { toast = "对公转账信息已复制" },
+                    )
+
+                    Route.S37ApiKeyConfigured -> S37ApiKeyConfigured(
+                        onBack = { nav.backOrHome() },
+                        onRetryCheck = { toast = "密钥校验通过" },
+                        onUpdateKey = { nav.go(Route.S14ApiKey) },
+                        onDeleteProvider = { nav.go(Route.S39ProviderEdit) },
+                    )
+
+                    Route.S39ProviderEdit -> S39ProviderEdit(
+                        onBack = { nav.backOrHome() },
+                        onRefillKey = { nav.go(Route.S14ApiKey) },
+                        onDelete = { toast = "提供方已删除（演示）" },
+                        onSave = {
+                            toast = "提供方已保存"
+                            nav.backOrHome()
+                        },
+                    )
+
+                    // —— v20 S40–S48：动作落地页 ——
+                    Route.S40NewTask -> S40NewTask(
+                        onBack = { nav.backOrHome() },
+                        onUsePreset = { nav.go(Route.S33AgentPresets) },
+                        onPickWorkspace = { nav.go(Route.S41PickFolder) },
+                        onPickModel = { sheet = SheetKind.Model },
+                        onSave = {
+                            toast = "任务已保存并启用（jobs-local）"
+                            nav.backOrHome()
+                        },
+                    )
+
+                    Route.S41PickFolder -> S41PickFolder(
+                        onBack = { nav.backOrHome() },
+                        onNewFolder = { toast = "新建文件夹需存储授权 · 演示页" },
+                        onOpenTermux = { nav.go(Route.S27Termux) },
+                        onConfirm = { name ->
+                            toast = "已选择「$name」作工作区"
+                            nav.backOrHome()
+                        },
+                    )
+
+                    Route.S42CreatePlugin -> S42CreatePlugin(
+                        onBack = { nav.backOrHome() },
+                        onHotReload = { toast = "插件已热重载" },
+                        onKeepDraft = { toast = "草稿已保留在本地" },
+                        onExportSource = { toast = "源码已导出到工作区" },
+                        onOpenPlugins = { nav.go(Route.S12Plugins) },
+                    )
+
+                    Route.S43AddModel -> S43AddModel(
+                        onBack = { nav.backOrHome() },
+                        onOpenProvider = { nav.go(Route.S25Provider) },
+                        onSave = {
+                            toast = "模型与推理等级映射已保存"
+                            nav.backOrHome()
+                        },
+                    )
+
+                    Route.S44IndexSource -> S44IndexSource(
+                        onBack = { nav.backOrHome() },
+                        onOpenMarket = { nav.go(Route.S21MarketDiscover) },
+                        onVerify = { toast = "索引文件校验通过 · SHA-256 匹配" },
+                        onAdd = {
+                            toast = "索引源已添加并切换"
+                            nav.backOrHome()
+                        },
+                    )
+
+                    Route.S45GlobalSearch -> S45GlobalSearch(
+                        onBack = { nav.backOrHome() },
+                        onClear = { toast = "已清空搜索历史" },
+                        onOpenSession = { nav.go(Route.S5ChatRunning) },
+                        onOpenFile = { nav.go(Route.S11Workspace) },
+                        onOpenPlugin = { nav.go(Route.S12Plugins) },
+                        onOpenCommand = { nav.go(Route.S10Command) },
+                        onRecent = { toast = "已填入搜索词：$it" },
+                    )
+
+                    Route.S46Export -> S46Export(
+                        onBack = { nav.backOrHome() },
+                        onDone = {
+                            toast = vm.exportRedactedLog()
+                            nav.backOrHome()
+                        },
+                    )
+
+                    Route.S47GitCommit -> S47GitCommit(
+                        onBack = { nav.backOrHome() },
+                        onCommit = { toast = "已提交到本地仓库" },
+                        onPush = { toast = "推送需配置远端 · 演示页" },
+                        onRegenerate = { toast = "正在重新生成提交说明…" },
+                        onManualEdit = { toast = "已切到手动编辑" },
+                        onBackToSession = { nav.go(Route.S5ChatRunning) },
+                        onOpenWorkspace = { nav.go(Route.S11Workspace) },
+                    )
+
+                    Route.S48Archived -> S48Archived(
+                        onBack = { nav.backOrHome() },
+                        onBatch = { toast = "已进入批量选择" },
+                        onExportAll = { nav.go(Route.S46Export) },
+                        onRestore = { toast = "会话已恢复到当前工作区" },
+                        onDeleteSelected = { toast = "删除需二次确认 · 演示页" },
+                        onOpenSession = { nav.go(Route.S5ChatRunning) },
+                        onBackToDrawer = { drawerOpen = true },
+                    )
+
+                    Route.S49NewTermuxSession -> S49NewTermuxSession(
+                        onBack = { nav.backOrHome() },
+                        onPickWorkspace = { nav.go(Route.S41PickFolder) },
+                        onCreate = {
+                            // 建完回到 S27 终端窗口（会话列表里可切换），不压新栈
+                            toast = "终端会话已创建"
+                            nav.backOrHome()
                         },
                     )
 
@@ -483,6 +727,52 @@ fun DshApp(startRoute: Route = Route.S3Home) {
 
                 SheetKind.Model -> Unit
 
+                // —— v20：S3 右上角「本机服务与快捷入口」——
+                SheetKind.Service -> S3ServiceSheet(
+                    visible = true,
+                    onDismiss = { sheet = SheetKind.None },
+                    serviceRunning = connection == DshViewModel.ClientPhase.Ready,
+                    servicePort = ":3081",
+                    nasConnected = nasConnected,
+                    codeViewOn = codeViewOn,
+                    onCodeViewChange = { codeViewOn = it },
+                    onTermux = {
+                        sheet = SheetKind.None
+                        nav.go(Route.S27Termux)
+                    },
+                    onNewSession = {
+                        sheet = SheetKind.None
+                        nav.go(Route.S49NewTermuxSession)
+                    },
+                    onNas = {
+                        sheet = SheetKind.None
+                        nav.go(if (nasConnected) Route.S16Nas else Route.S34NasEmpty)
+                    },
+                    onExport = {
+                        sheet = SheetKind.None
+                        nav.go(Route.S46Export)
+                    },
+                    onUsage = {
+                        sheet = SheetKind.None
+                        nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
+                    },
+                    onAllSettings = {
+                        sheet = SheetKind.None
+                        nav.go(Route.S14Settings)
+                    },
+                )
+
+                // —— v20：S38 退出登录二次确认 ——
+                SheetKind.Logout -> S38LogoutSheet(
+                    visible = true,
+                    onDismiss = { sheet = SheetKind.None },
+                    onConfirm = {
+                        sheet = SheetKind.None
+                        accountLoggedIn = false
+                        toast = "已退出登录"
+                    },
+                )
+
                 SheetKind.None -> Unit
             }
 
@@ -498,7 +788,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     onAuto = { vm.setAutoModel(it) },
                     onAccount = {
                         sheet = SheetKind.None
-                        nav.go(Route.S15Account)
+                        nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
                     },
                     onDone = { sheet = SheetKind.None },
                 )
@@ -513,8 +803,12 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 onAutomation = { drawerOpen = false; nav.go(Route.S13Automation) },
                 onWorkspace = { drawerOpen = false; nav.go(Route.S11Workspace) },
                 onSettings = { drawerOpen = false; nav.go(Route.S14Settings) },
-                onAccount = { drawerOpen = false; nav.go(Route.S15Account) },
+                onAccount = {
+                    drawerOpen = false
+                    nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
+                },
                 onTermux = { drawerOpen = false; nav.go(Route.S27Termux) },
+                onArchived = { drawerOpen = false; nav.go(Route.S48Archived) },
                 liveSessions = sessions,
             )
 
