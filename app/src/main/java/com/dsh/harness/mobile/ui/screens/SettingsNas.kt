@@ -231,11 +231,16 @@ fun S14Settings(
                 ) {
                     DshChip(":3081", tone = ChipTone.Ok, mini = true)
                 }
-                DshDivider()
-                // v30：SAF 存储目录桥（取代已删的 NAS 假页面）。副标题反映真实授权态
+            }
+
+            DshSecTitle("存储与同步", note = "取代原 NAS 连接")
+            SettingsGroup {
+                // v30：SAF 存储目录桥（取代 v29 删掉的 NAS 假页面）。
+                // 上游无 NAS 同步后端，这里用系统存储访问(SAF)做真实外部目录挂载；
+                // 副标题反映真实授权态，不编"已连"假数值。独立成区 = 用户要找的 NAS 设置入口。
                 SettingRow(
                     title = "存储目录",
-                    subtitle = if (safOn) "已挂载：$safName" else "未选择外部存储 · 点此授权",
+                    subtitle = if (safOn) "已挂载：$safName · 取代 NAS" else "外部目录挂载(SAF) · 取代 NAS · 点此授权",
                     icon = DshIcons.FolderOpen,
                     statusDot = if (safOn) StatusDot.Ok else StatusDot.Warn,
                     onClick = onStorage,
