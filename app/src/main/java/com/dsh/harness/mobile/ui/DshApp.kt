@@ -157,8 +157,9 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     var drawerOpen by remember { mutableStateOf(false) }
     var dark by remember { mutableStateOf(false) }
 
-    // —— 全局登录态 / 连接态（无真实登录体系，默认 false → 各屏走诚实空态）——
-    var accountLoggedIn by remember { mutableStateOf(false) }
+    // —— 全局连接态 ——
+    // v27：删掉了 accountLoggedIn 这个假状态（local mutableState，与真实凭据脱钩）。
+    // 「是否可跑任务」现在只有一个真相源：apiKey.configured（读 dsh 凭据存储）。
     var nasConnected by remember { mutableStateOf(false) }
     // svc Sheet 的「代码视图」开关（S3 首页与 Sheet 共享，提升到根）
     var codeViewOn by remember { mutableStateOf(true) }
@@ -485,14 +486,14 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onBack = { nav.backOrHome() },
                         dark = dark,
                         onToggleDark = { dark = it },
-                        accountLoggedIn = accountLoggedIn,
+                        keyConfigured = apiKey.configured,
                         nasConnected = nasConnected,
                         onAccount = {
                             // 未登录进 S31 登录页；已登录进 S15 账号与余额
-                            nav.go(if (accountLoggedIn) Route.S15Account else Route.S31AccountLogin)
+                            nav.go(if (apiKey.configured) Route.S15Account else Route.S31AccountLogin)
                         },
                         onBalance = {
-                            nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
+                            nav.go(if (apiKey.configured) Route.S15Account else Route.S32AccountLoggedOut)
                         },
                         apiKeyConfigured = apiKey.ok,
                         onApiKey = {
@@ -564,7 +565,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         },
                         keyConfigured = apiKey.configured,
                         onOpenApp = {
-                            accountLoggedIn = true
                             nav.go(Route.S15Account)
                         },
                         onGoKey = { nav.go(Route.S14ApiKey) },
@@ -803,7 +803,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     },
                     onUsage = {
                         sheet = SheetKind.None
-                        nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
+                        nav.go(if (apiKey.configured) Route.S15Account else Route.S32AccountLoggedOut)
                     },
                     onAllSettings = {
                         sheet = SheetKind.None
@@ -817,8 +817,10 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     onDismiss = { sheet = SheetKind.None },
                     onConfirm = {
                         sheet = SheetKind.None
-                        accountLoggedIn = false
-                        toast = "已退出登录"
+                        // v27：真动作 —— 真的把凭据从 dsh 凭据存储里删掉
+                        // （dsh 契约：移除 = 删除那一行，置空会被存储拒绝）
+                        vm.removeApiKey()
+                        toast = "已清除本机 API Key"
                     },
                 )
 
@@ -837,7 +839,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     onAuto = { vm.setAutoModel(it) },
                     onAccount = {
                         sheet = SheetKind.None
-                        nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
+                        nav.go(if (apiKey.configured) Route.S15Account else Route.S32AccountLoggedOut)
                     },
                     onDone = { sheet = SheetKind.None },
                 )
@@ -883,7 +885,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 onSettings = { drawerOpen = false; nav.go(Route.S14Settings) },
                 onAccount = {
                     drawerOpen = false
-                    nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
+                    nav.go(if (apiKey.configured) Route.S15Account else Route.S32AccountLoggedOut)
                 },
                 onTermux = { drawerOpen = false; nav.go(Route.S27Termux) },
                 onArchived = { drawerOpen = false; nav.go(Route.S48Archived) },

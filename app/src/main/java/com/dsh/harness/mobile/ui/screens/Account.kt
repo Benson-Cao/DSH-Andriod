@@ -493,7 +493,7 @@ fun S32AccountLoggedOut(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("近 7 日用量", style = Type.secTitle, color = c.ink)
                     Spacer(Modifier.weight(1f))
-                    Text("未登录无数据", style = Type.meta, color = c.ink3)
+                    Text("配置 API Key 后可查", style = Type.meta, color = c.ink3)
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -1320,7 +1320,9 @@ fun BoxScope.S38LogoutSheet(
         onDismiss = onDismiss,
         header = {
             DshSheetHeader(
-                title = "退出登录？",
+                // v27：上游没有账号登录，所以没有"退出登录"这回事 ——
+                // 真实的破坏性操作只有一件：删掉本机保存的 API Key。
+                title = "清除本机 API Key？",
                 icon = DshIcons.Logout,
                 iconTint = c.warn,
             )
@@ -1333,7 +1335,7 @@ fun BoxScope.S38LogoutSheet(
                     .background(c.card)
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
             ) {
-                S38LossRow(DshIcons.RemoveCircleOutline, c.danger, "账号额度不再可用，需改用 API Key 继续")
+                S38LossRow(DshIcons.RemoveCircleOutline, c.danger, "本机保存的密钥将被删除，之后需重新配置才能跑任务")
                 DshDivider()
                 S38LossRow(DshIcons.PauseCircleOutline, c.warn, "进行中的任务会被停止，未完成轮次不续跑")
                 DshDivider()
@@ -1342,16 +1344,16 @@ fun BoxScope.S38LogoutSheet(
                 S38LossRow(DshIcons.Check, c.ok, "工作区文件与插件配置不受影响")
             }
             Text(
-                "若只是想换计费方式，可以在新会话的模型选择里改用 API Key 提供方，不必退出登录。",
+                "若只是想换一个密钥，到「设置 → API 密钥」重新录入即可，不必清除现有配置。",
                 style = Type.meta.copy(lineHeight = 17.6.sp),
                 color = c.ink3,
                 modifier = Modifier.padding(top = 10.dp),
             )
         },
         footer = {
-            DshBtn("留在当前", tone = BtnTone.Ghost, onClick = onDismiss)
+            DshBtn("保留密钥", tone = BtnTone.Ghost, onClick = onDismiss)
             Spacer(Modifier.height(9.dp))
-            DshBtn("确认退出", tone = BtnTone.Danger, onClick = onConfirm)
+            DshBtn("确认清除", tone = BtnTone.Danger, onClick = onConfirm)
         },
     )
 }

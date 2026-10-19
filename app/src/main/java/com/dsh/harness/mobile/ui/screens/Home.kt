@@ -964,7 +964,9 @@ fun BoxScope.S29ModelSheet(
             )
         },
         content = {
-            DshSecTitle("DeepSeek 账号", note = "用余额计费")
+            // v27：模型本身是真实的（来自 session/new 的 configOptions），
+            // 但计费方式不是"账号余额" —— 上游只认 API Key，改掉假 note。
+            DshSecTitle("DeepSeek 官方", note = "API Key 计费")
             S29GroupCard {
                 deepseek.forEachIndexed { i, m ->
                     if (i > 0) DshDivider()

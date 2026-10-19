@@ -54,7 +54,8 @@ fun S14Settings(
     dark: Boolean = false,
     onToggleDark: (Boolean) -> Unit,
     /** 是否已登录 DeepSeek 账号。无真实登录态，默认 false → 行走诚实空态 */
-    accountLoggedIn: Boolean = false,
+    /** v27：改名 —— 这里传的是真实的「是否已配置 API Key」，不再是虚构的登录态 */
+    keyConfigured: Boolean = false,
     /** NAS 是否已连接。默认 false → S34 空态 */
     nasConnected: Boolean = false,
     /** DeepSeek 账号行：未登录 → S31 登录；已登录 → S15 账号与余额 */
@@ -125,33 +126,35 @@ fun S14Settings(
 
             DshSecTitle("模型", note = "密钥只写不回读")
             SettingsGroup {
-                // 1. DeepSeek 账号 → S31
+                // 1. DeepSeek 凭据 → S31
+                // v27：上游没有账号登录（见 S31 实证说明），这里只反映真实密钥状态，
+                // 不再编"账号额度"这种上游不存在的计费方式。
                 SettingRow(
-                    title = "DeepSeek 账号",
-                    subtitle = if (accountLoggedIn) "账号额度直接跑任务"
-                    else "未登录 · 登录后用账号额度跑任务",
+                    title = "DeepSeek 凭据",
+                    subtitle = if (keyConfigured) "已配置 API Key · 可直接跑任务"
+                    else "未配置 · 点此到平台申请并填入",
                     icon = DshIcons.Bolt,
-                    statusDot = if (accountLoggedIn) StatusDot.Ok else StatusDot.Warn,
+                    statusDot = if (keyConfigured) StatusDot.Ok else StatusDot.Warn,
                     onClick = onAccount,
                 ) {
                     DshChip(
-                        if (accountLoggedIn) "已连接" else "去登录",
-                        tone = if (accountLoggedIn) ChipTone.Ok else ChipTone.Warn,
+                        if (keyConfigured) "已配置" else "去配置",
+                        tone = if (keyConfigured) ChipTone.Ok else ChipTone.Warn,
                         mini = true,
                     )
                 }
                 DshDivider()
-                // 2. 账号与余额 → S32（未登录）/ S15（已登录）
+                // 2. 余额与用量 → S32（未配置）/ S15（已配置）
                 SettingRow(
-                    title = "账号与余额",
-                    subtitle = if (accountLoggedIn) "账号额度直接跑任务"
-                    else "未登录 · 用 API Key 跑任务",
+                    title = "余额与用量",
+                    subtitle = if (keyConfigured) "在 platform.deepseek.com 查看"
+                    else "需先配置 API Key 才能查询",
                     icon = DshIcons.AccountBalanceWallet,
                     onClick = onBalance,
                 ) {
                     DshChip(
-                        if (accountLoggedIn) "已登录" else "未登录",
-                        tone = if (accountLoggedIn) ChipTone.Ok else ChipTone.Warn,
+                        if (keyConfigured) "已连接" else "未配置",
+                        tone = if (keyConfigured) ChipTone.Ok else ChipTone.Warn,
                         mini = true,
                     )
                 }
@@ -499,9 +502,10 @@ fun S15Account(
             DshBtn("添加提供方", icon = DshIcons.Add, tone = BtnTone.Ghost, onClick = onAddProvider)
 
             Spacer(Modifier.height(16.dp))
-            // 退出登录降为文字链，不做成按钮 —— 避免误触
+            // v27：没有"登录"这回事，真实的破坏性操作是清除凭据 ——
+            // 仍降为文字链避免误触，但文案必须说清它到底删什么
             Text(
-                "退出登录",
+                "清除本机 API Key",
                 style = Type.chip,
                 color = c.danger,
                 modifier = Modifier
