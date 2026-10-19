@@ -158,6 +158,11 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     var nasConnected by remember { mutableStateOf(false) }
     // svc Sheet 的「代码视图」开关（S3 首页与 Sheet 共享，提升到根）
     var codeViewOn by remember { mutableStateOf(true) }
+    // v23：S3 输入框内容与「@提及」Sheet 状态提升到根 ——
+    // 路由切去 S10 指令面板再回来时，屏内 remember 会随 AnimatedContent
+    // 退出组合而丢失，选中的指令/会话就回填不进输入框（实测"选了没反应"）。
+    var homeInput by remember { mutableStateOf("") }
+    var mentionOpen by remember { mutableStateOf(false) }
 
     // 冷启动即拉起本地 dsh ACP 进程并握手
     LaunchedEffect(Unit) { vm.connect() }
@@ -290,7 +295,17 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onSend = { text ->
                             vm.send(text)
                             nav.go(Route.S5ChatRunning)
+                            // 发送后清空草稿：回来时不该看到上一轮的旧输入
+                            homeInput = ""
                         },
+                        // 发送键不可用被点时给出原因（此前静默禁用 = "点不到"）
+                        onSendBlocked = { reason -> toast = reason },
+                        input = homeInput,
+                        onInputChange = { homeInput = it },
+                        // 输入 "/" → S10 斜杠指令面板；选中指令回填输入框
+                        onSlashTrigger = { nav.go(Route.S10Command) },
+                        // 输入 "@" → 提及文件/会话 Sheet
+                        onMentionTrigger = { mentionOpen = true },
                         onShowDiagnostics = { sheet = SheetKind.Diagnostics },
                         // v20：右上角描边菜单按钮 → 「本机服务与快捷入口」Sheet
                         onOpenServices = { sheet = SheetKind.Service },
@@ -335,7 +350,12 @@ fun DshApp(startRoute: Route = Route.S3Home) {
 
                     Route.S10Command -> S10CommandPanel(
                         onBack = { nav.backOrHome() },
-                        onPick = { nav.backOrHome() },
+                        // 选中指令回填输入框再返回（此前 onPick 丢弃选中值，
+                        // 是"选了指令没反应"的根因）
+                        onPick = { cmd ->
+                            homeInput = cmd
+                            nav.backOrHome()
+                        },
                     )
 
                     Route.S11Workspace -> S11Workspace(
@@ -494,6 +514,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onOpenApp = {
                             accountLoggedIn = true
                             nav.go(Route.S15Account)
+                            // 诚实提示：演示登录只走通界面路径，真实跑任务仍需 API Key
+                            toast = "演示登录已生效 · 真实跑任务仍需 API Key"
                         },
                         onGoKey = { nav.go(Route.S14ApiKey) },
                     )
@@ -791,6 +813,20 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         nav.go(if (accountLoggedIn) Route.S15Account else Route.S32AccountLoggedOut)
                     },
                     onDone = { sheet = SheetKind.None },
+                )
+            }
+
+            // —— v23：S3 输入框敲 "@" 的「提及文件或会话」Sheet ——
+            if (mentionOpen) {
+                S3MentionSheet(
+                    visible = true,
+                    onDismiss = { mentionOpen = false },
+                    sessions = sessions,
+                    onPickSession = { s ->
+                        mentionOpen = false
+                        // 选中会话 → 把「@标题 」追加到输入框（保留已输入的指令前缀）
+                        homeInput = homeInput.trimEnd() + "@" + s.title + " "
+                    },
                 )
             }
 

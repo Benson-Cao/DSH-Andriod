@@ -26,6 +26,7 @@ object DshIcons {
     val MoreVert = Icons.Filled.MoreVert
     val ChevronRight = Icons.Filled.KeyboardArrowRight
     val Search = Icons.Filled.Search
+    val AlternateEmail = Icons.Filled.AlternateEmail
     val FilterList = Icons.Filled.FilterList
     val FileDownload = Icons.Filled.FileDownload
     val Settings = Icons.Filled.Settings

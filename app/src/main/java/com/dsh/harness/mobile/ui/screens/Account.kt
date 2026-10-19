@@ -208,6 +208,10 @@ fun S31AccountLogin(
     onGoKey: () -> Unit = {},
 ) {
     val c = DshTheme.colors
+    // v23 拆两态：等待授权 →（演示授权）→ 登录成功。
+    // 修复点：此前两态同屏展示（用户截图实测），看起来"登录成功"却什么都不能用；
+    // 且本 App 未接入真实 OAuth，必须明示演示性质，不拿设计稿的假邮箱充数。
+    var authorized by remember { mutableStateOf(false) }
 
     DshScreen(modifier) {
         DshNavBar(onBack = onBack, title = "登录 DeepSeek 账号", stacked = true)
@@ -258,76 +262,103 @@ fun S31AccountLogin(
             }
 
             Spacer(Modifier.height(13.dp))
-            // 等待授权卡（soft）
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.soft)
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    color = c.brand,
-                    strokeWidth = 2.dp,
-                )
-                Column(Modifier.weight(1f)) {
+            if (!authorized) {
+                // —— 态一：等待授权 ——
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.soft)
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = c.brand,
+                        strokeWidth = 2.dp,
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "等待你在系统浏览器完成授权",
+                            style = Type.sec.copy(fontWeight = FontWeight.SemiBold),
+                            color = c.ink,
+                        )
+                        Text(
+                            "auth.deepseek.com/authorize",
+                            style = Type.mono.copy(fontSize = 10.5.sp),
+                            color = c.ink3,
+                            modifier = Modifier.padding(top = 2.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
-                        "等待你在系统浏览器完成授权",
+                        "取消",
+                        style = Type.sec,
+                        color = c.danger,
+                        modifier = Modifier.clickable { onCancelLogin() },
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+                // 诚实说明：本 App 没有真实 OAuth，别让用户以为真跳了浏览器
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.warnSoft())
+                        .padding(12.dp),
+                ) {
+                    Text(
+                        "演示登录",
                         style = Type.sec.copy(fontWeight = FontWeight.SemiBold),
                         color = c.ink,
                     )
                     Text(
-                        "auth.deepseek.com/authorize",
-                        style = Type.mono.copy(fontSize = 10.5.sp),
-                        color = c.ink3,
-                        modifier = Modifier.padding(top = 2.dp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        "本 App 未接入 DeepSeek OAuth 授权流程，不会真正打开系统浏览器。" +
+                            "点下方按钮仅演示登录后的界面路径；真实跑任务仍需在「设置 → API 密钥」配置 Key。",
+                        style = Type.meta.copy(lineHeight = 18.sp),
+                        color = c.ink2,
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
-                Text(
-                    "取消",
-                    style = Type.sec,
-                    color = c.danger,
-                    modifier = Modifier.clickable { onCancelLogin() },
-                )
-            }
 
-            Spacer(Modifier.height(10.dp))
-            // 登录成功卡（ok 描边；官方文案原样保留）
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.ok, RoundedCornerShape(Radius.xl))
-                    .padding(12.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Spacer(Modifier.height(13.dp))
+                DshBtn("模拟完成授权（演示）", icon = DshIcons.Bolt, onClick = { authorized = true })
+            } else {
+                // —— 态二：登录成功（演示路径的终点）——
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.ok, RoundedCornerShape(Radius.xl))
+                        .padding(12.dp),
                 ) {
-                    Icon(DshIcons.CheckCircle, null, Modifier.size(17.dp), tint = c.ok)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(DshIcons.CheckCircle, null, Modifier.size(17.dp), tint = c.ok)
+                        Text(
+                            "登录成功",
+                            style = Type.rowTitle.copy(fontWeight = FontWeight.Bold),
+                            color = c.ink,
+                        )
+                        DshChip("已回跳", tone = ChipTone.Ok, mini = true)
+                    }
                     Text(
-                        "登录成功",
-                        style = Type.rowTitle.copy(fontWeight = FontWeight.Bold),
-                        color = c.ink,
+                        "你可以关闭此页面，返回应用继续工作。",
+                        style = Type.meta.copy(lineHeight = 18.sp),
+                        color = c.ink2,
+                        modifier = Modifier.padding(top = 6.dp),
                     )
-                    DshChip("已回跳", tone = ChipTone.Ok, mini = true)
                 }
-                Text(
-                    "你可以关闭此页面，返回应用继续工作。benson@example.com",
-                    style = Type.meta.copy(lineHeight = 18.sp),
-                    color = c.ink2,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-            }
 
-            Spacer(Modifier.height(13.dp))
-            DshBtn("打开应用", icon = DshIcons.OpenInNew, onClick = onOpenApp)
+                Spacer(Modifier.height(13.dp))
+                DshBtn("打开应用", icon = DshIcons.OpenInNew, onClick = onOpenApp)
+            }
 
             Text(
                 "已有 API Key？去配置密钥",

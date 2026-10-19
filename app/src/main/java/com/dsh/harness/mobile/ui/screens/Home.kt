@@ -68,13 +68,25 @@ fun S3Home(
     /** 点输入框右下角模型名 → 唤起 S29 模型选择器 */
     onPickModel: () -> Unit = {},
     onSend: (String) -> Unit,
+    /** 发送键在不可用被点时回调（原因说明，由调用方弹提示） */
+    onSendBlocked: (String) -> Unit = {},
+    /**
+     * v23：输入框内容提升到 DshApp —— 路由切去 S10 指令面板再回来时，
+     * 原来的屏内 state 会随 AnimatedContent 退出组合而丢失，选中的指令
+     * 就回填不进输入框（用户实测"选了指令没反应"）。
+     */
+    input: String = "",
+    onInputChange: (String) -> Unit = {},
+    /** 输入 "/" → 打开 S10 斜杠指令面板 */
+    onSlashTrigger: () -> Unit = {},
+    /** 输入 "@" → 打开文件/对话选择 Sheet */
+    onMentionTrigger: () -> Unit = {},
     /** 点顶栏状态 chip 时打开诊断（真实日志来自 ACP 客户端） */
     onShowDiagnostics: () -> Unit = {},
     /** v20：右上角描边菜单按钮 → 「本机服务与快捷入口」Sheet */
     onOpenServices: () -> Unit = {},
 ) {
     val c = DshTheme.colors
-    var input by remember { mutableStateOf("") }
 
     DshScreen(modifier) {
         // —— 顶栏：☰ + 品牌字标；右侧 = 引擎状态 chip + v20 描边服务菜单按钮 ——
@@ -168,7 +180,15 @@ fun S3Home(
                 if (workspaceChosen) {
                     BasicTextInputCompat(
                         value = input,
-                        onValueChange = { input = it },
+                        onValueChange = { v ->
+                            val grew = v.length > input.length
+                            onInputChange(v)
+                            // v23：设计稿 S3 输入框 "/调用指令，@文件或对话" 的联动落地：
+                            // 新内容恰为 "/" → 拉起 S10；新键入 "@" → 拉起选择 Sheet。
+                            // 只认"增长"方向，避免退格删除时反复弹面板。
+                            if (v == "/") onSlashTrigger()
+                            if (grew && v.lastOrNull() == '@') onMentionTrigger()
+                        },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
                     )
                 } else {
@@ -233,13 +253,27 @@ fun S3Home(
                         )
                     }
                     val canSend = workspaceChosen && input.isNotBlank() && connectionReady
+                    // v23：不禁用点击。原来 enabled=false 时整个按钮无响应，
+                    // 用户实测"发送按钮点不到"且得不到任何原因。保持灰底视觉，
+                    // 但点击时给出具体原因（空输入 / 引擎未就绪 / 未选工作区）。
                     DshIBtn(
                         icon = DshIcons.ArrowForward,
                         contentDescription = "发送",
                         bg = if (canSend) c.brand else c.line,
                         tint = if (canSend) Color.White else c.ink3,
-                        enabled = canSend,
-                        onClick = { if (canSend) onSend(input) },
+                        onClick = {
+                            if (canSend) {
+                                onSend(input)
+                            } else {
+                                onSendBlocked(
+                                    when {
+                                        !workspaceChosen -> "先选择一个工作区"
+                                        input.isBlank() -> "先输入内容"
+                                        else -> "引擎启动中，稍候再发"
+                                    },
+                                )
+                            }
+                        },
                     )
                 }
             }
@@ -652,6 +686,136 @@ fun BoxScope.S3ServiceSheet(
         },
     )
 }
+// ============================ S3 提及（@）选择 Sheet ============================
+
+/**
+ * S3 输入框敲 `@` 弹出的「提及文件或会话」Sheet（v23 新增）。
+ *
+ * 修复点：此前 placeholder 里品牌色高亮的 `/` `@` 只是静态文字，
+ * 点了没有任何反应（用户实测反馈「/和@无法使用」）。现在：
+ *   - 输入 `/` → DshApp 导航到 S10 指令面板，选中指令回填输入框；
+ *   - 输入 `@` → 弹出本 Sheet，选中会话把 `@<标题> ` 追加进输入框。
+ *
+ * 会话组用真实 `session/list` 数据（来自 ACP）；文件组本 App 没有文件索引能力
+ * → 诚实空态，不拿设计稿示意名充数。
+ */
+@Composable
+fun BoxScope.S3MentionSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    sessions: List<com.dsh.harness.mobile.data.DshViewModel.Session> = emptyList(),
+    onPickSession: (com.dsh.harness.mobile.data.DshViewModel.Session) -> Unit = {},
+) {
+    val c = DshTheme.colors
+    DshSheet(
+        visible = visible,
+        onDismiss = onDismiss,
+        maxHeightRatio = 0.75f,
+        header = {
+            DshSheetHeader(
+                title = "提及文件或会话",
+                icon = DshIcons.AlternateEmail,
+                iconTint = c.brand,
+                trailing = {
+                    DshIBtn(DshIcons.Close, "关闭", onClick = onDismiss)
+                },
+            )
+        },
+        content = {
+            DshSecTitle("会话", note = "${sessions.size}")
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(c.card)
+                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
+            ) {
+                if (sessions.isEmpty()) {
+                    Text(
+                        "暂无会话 · 先去左上角侧栏开一个",
+                        style = Type.sec,
+                        color = c.ink3,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+                    )
+                } else {
+                    sessions.forEachIndexed { i, s ->
+                        if (i > 0) DshDivider()
+                        MentionSessionRow(
+                            title = s.title,
+                            meta = s.cwd.substringAfterLast('/') + " · " + s.updatedAt.takeLast(5),
+                            onClick = { onPickSession(s) },
+                        )
+                    }
+                }
+            }
+
+            DshSecTitle("文件")
+            DshEmpty(
+                "本机文件索引未接入 · 当前只能提及会话",
+                icon = DshIcons.InsertDriveFile,
+            )
+
+            Text(
+                "输入 @ 弹出本面板；选中会话会把「@会话标题」写回输入框，发送时随消息一起提交。",
+                style = Type.meta.copy(lineHeight = 17.6.sp),
+                color = c.ink3,
+                modifier = Modifier.padding(top = 11.dp),
+            )
+        },
+        footer = {
+            DshBtn("关闭", tone = BtnTone.Ghost, onClick = onDismiss)
+        },
+    )
+}
+
+/** S3 提及 Sheet 的单行会话（标题 + 工作区目录名 · 时间） */
+@Composable
+private fun MentionSessionRow(
+    title: String,
+    meta: String,
+    onClick: () -> Unit,
+) {
+    val c = DshTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Icon(
+            DshIcons.Chat,
+            contentDescription = null,
+            modifier = Modifier.size(17.dp),
+            tint = c.brand,
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = Type.rowTitle,
+                color = c.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                meta,
+                style = Type.sec,
+                color = c.ink3,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        Icon(
+            DshIcons.ChevronRight,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = c.ink3,
+        )
+    }
+}
+
 // ============================ 引擎诊断 Sheet ============================
 
 /**
