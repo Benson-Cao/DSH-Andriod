@@ -55,6 +55,8 @@ fun BoxScope.S4Drawer(
     selectedNav: Int = 0,
     /** 来自 ACP session/list 的真实会话；为空时退回设计稿演示数据 */
     liveSessions: List<com.dsh.harness.mobile.data.DshViewModel.Session> = emptyList(),
+    /** v29：真实密钥状态，替代原写死的 ¥4.08 假余额 */
+    keyConfigured: Boolean = false,
 ) {
     val c = DshTheme.colors
 
@@ -169,13 +171,17 @@ fun BoxScope.S4Drawer(
                     )
                 }
                 Text(
-                    "DeepSeek 账号",
+                    "DeepSeek 凭据",
                     style = Type.rowTitle,
                     color = c.ink,
                     maxLines = 1,
                 )
                 Spacer(Modifier.weight(1f))
-                Text("¥4.08", style = Type.meta.copy(fontSize = 10.5.sp), color = c.ink3)
+                Text(
+                    if (keyConfigured) "已配置 API Key" else "未配置",
+                    style = Type.meta.copy(fontSize = 10.5.sp),
+                    color = if (keyConfigured) c.ink2 else c.ink3,
+                )
             }
 
             NavRow(

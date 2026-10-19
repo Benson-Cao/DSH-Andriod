@@ -672,125 +672,9 @@ fun S33AgentPresets(
 
 // ============================ S34 NAS · 未连接空态 ============================
 
-@Composable
-fun S34NasEmpty(
-    modifier: Modifier = Modifier,
-    onBack: () -> Unit,
-    onConnect: () -> Unit = {},
-) {
-    val c = DshTheme.colors
-    var protocol by remember { mutableStateOf(0) }
-
-    DshScreen(modifier) {
-        DshNavBar(onBack = onBack, title = "NAS 连接", stacked = true)
-
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = Space.lg),
-        ) {
-            Spacer(Modifier.height(14.dp))
-
-            // —— 空态主卡（不显示容量条，改给前置条件）——
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .padding(horizontal = 16.dp, vertical = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    Modifier
-                        .size(54.dp)
-                        .background(c.line2, RoundedCornerShape(17.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(DshIcons.CloudOff, null, Modifier.size(26.dp), tint = c.ink3)
-                }
-                Spacer(Modifier.height(11.dp))
-                Text("还没有连接 NAS", style = Type.rowTitle, color = c.ink)
-                Spacer(Modifier.height(7.dp))
-                Text(
-                    "连上之后可以把挂载目录当工作区来源，\n或只作为产物备份目标",
-                    style = Type.sec.copy(lineHeight = 20.sp),
-                    color = c.ink3,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(15.dp))
-                DshBtn("连接 NAS", icon = DshIcons.Add, onClick = onConnect)
-            }
-
-            DshSecTitle("支持协议")
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                DshChip("WebDAV", tone = ChipTone.On, onClick = { protocol = 0 })
-                DshChip("SMB", onClick = { protocol = 1 })
-                DshChip("SFTP", onClick = { protocol = 2 })
-            }
-
-            DshSecTitle("前置条件")
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-            ) {
-                DshMRow(
-                    title = "与 NAS 处于同一内网",
-                    subtitle = "跨网需先打通路由或走 VPN",
-                    icon = DshIcons.Wifi,
-                    iconTone = ChipTone.Neutral,
-                )
-                DshDivider()
-                DshMRow(
-                    title = "共享目录可读写",
-                    subtitle = "仅上传映射只能作备份目标",
-                    icon = DshIcons.FolderShared,
-                    iconTone = ChipTone.Neutral,
-                )
-                DshDivider()
-                DshMRow(
-                    title = "凭据只写不回读",
-                    subtitle = "与模型密钥同一套保存规则",
-                    icon = DshIcons.Shield,
-                    iconTone = ChipTone.Neutral,
-                )
-            }
-
-            DshSecTitle("连不上先查这两项")
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-            ) {
-                Text(
-                    "1. 端口不通：测试连接报超时或 401，先确认端口与 HTTPS\n" +
-                        "2. 目录不可写：映射方向改「仅上传」或换共享目录",
-                    style = Type.meta.copy(lineHeight = 21.sp),
-                    color = c.ink2,
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-    }
-}
 
 // ============================ S35 用量与账单明细 ============================
 
-/** S35 一条消费记录 */
-private data class S35Record(
-    val title: String,
-    val subtitle: String,
-    val amount: String,
-    val failed: Boolean = false,
-)
 
 @Composable
 fun S35Usage(
@@ -800,32 +684,12 @@ fun S35Usage(
     onOpenSession: () -> Unit = {},
 ) {
     val c = DshTheme.colors
-    var range by remember { mutableStateOf(0) }
-
-    val records = listOf(
-        S35Record("生成 Q3 数据汇总 PPT", "昨天 19:41 · V4-Flash · 128.4k tok", "¥0.31"),
-        S35Record("给销售报表补同比列", "周一 · PTC · 341.2k tok", "¥0.84"),
-        S35Record("每日销售日报（定时）", "今 09:00 · V4-Flash · 22.1k tok", "¥0.05"),
-        S35Record(
-            "数据备份巡检（定时）",
-            "今 03:00 · 失败未计费 · MISSING_CREDENTIAL",
-            "¥0.00",
-            failed = true,
-        ),
-    )
-    val byModel = listOf(
-        Triple("DeepSeek-V4-Flash", 0.6f, "¥4.12"),
-        Triple("DeepSeek-V4-Pro", 0.4f, "¥2.70"),
-    )
 
     DshScreen(modifier) {
         DshNavBar(
             onBack = onBack,
             title = "用量与账单",
             stacked = true,
-            actions = {
-                DshIBtn(DshIcons.FileDownload, "导出账单 CSV", onClick = onExport)
-            },
         )
 
         Column(
@@ -837,292 +701,25 @@ fun S35Usage(
         ) {
             Spacer(Modifier.height(12.dp))
 
-            DshSeg(listOf("近 7 天", "近 30 天", "本月"), range) { range = it }
-
-            Spacer(Modifier.height(12.dp))
-
-            // —— 三项指标卡（Token / 缓存命中 / 消费）——
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .padding(horizontal = 8.dp, vertical = 13.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                S35Stat("2.14M", "Token", Modifier.weight(1f), c.ink)
-                Box(Modifier.width(1.dp).height(28.dp).background(c.line2))
-                S35Stat("71%", "缓存命中", Modifier.weight(1f), c.ok)
-                Box(Modifier.width(1.dp).height(28.dp).background(c.line2))
-                S35Stat("¥6.82", "消费", Modifier.weight(1f), c.ink)
-            }
-
-            DshSecTitle("按模型", modifier = Modifier.padding(top = 12.dp))
             Column(
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(Radius.xl))
                     .background(c.card)
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .padding(horizontal = 13.dp, vertical = 12.dp),
+                    .padding(16.dp),
             ) {
-                byModel.forEachIndexed { i, (name, frac, amount) ->
-                    if (i > 0) Spacer(Modifier.height(9.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(9.dp),
-                    ) {
-                        Text(
-                            name,
-                            style = Type.sec,
-                            color = c.ink,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.width(98.dp),
-                        )
-                        DshProgressBar(
-                            frac,
-                            Modifier.weight(1f),
-                            color = if (i == 0) c.brand else c.purple,
-                        )
-                        Text(
-                            amount,
-                            style = Type.sec.copy(fontWeight = FontWeight.SemiBold),
-                            color = c.ink,
-                            modifier = Modifier.width(46.dp),
-                            textAlign = TextAlign.Right,
-                        )
-                    }
-                }
-            }
-
-            DshSecTitle("消费记录", note = "${records.size} 条")
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-            ) {
-                records.forEachIndexed { i, r ->
-                    if (i > 0) DshDivider()
-                    DshMRow(
-                        title = r.title,
-                        subtitle = r.subtitle,
-                        icon = if (r.failed) DshIcons.ErrorOutline else null,
-                        iconTone = if (r.failed) ChipTone.Warn else null,
-                        trailing = { DshRowTail(r.amount) },
-                        onClick = onOpenSession,
-                    )
-                }
+                Text("此版本不提供账单明细", style = Type.rowTitle, color = c.ink)
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    "本 App 以 API Key 计费，没有账户余额与账单系统。\n" +
+                        "真实用量与扣费请在 platform.deepseek.com 的「用量」页查看。",
+                    style = Type.sec.copy(lineHeight = 20.sp),
+                    color = c.ink3,
+                )
             }
             Spacer(Modifier.height(8.dp))
         }
-    }
-}
-
-@Composable
-private fun S35Stat(value: String, label: String, modifier: Modifier = Modifier, color: Color) {
-    val c = DshTheme.colors
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            value,
-            style = Type.rowTitle.copy(fontWeight = FontWeight.Bold),
-            color = color,
-            maxLines = 1,
-        )
-        Text(label, style = Type.meta.copy(fontSize = 10.sp), color = c.ink3, modifier = Modifier.padding(top = 2.dp))
-    }
-}
-
-// ============================ S36 充值 ============================
-
-@Composable
-fun S36TopUp(
-    modifier: Modifier = Modifier,
-    onBack: () -> Unit,
-    onPay: () -> Unit = {},
-    onTransfer: () -> Unit = {},
-) {
-    val c = DshTheme.colors
-    var amount by remember { mutableStateOf(1) } // 0=¥10 1=¥50 2=其他
-    var pay by remember { mutableStateOf(0) } // 0=微信 1=支付宝 2=对公
-
-    val amounts = listOf(Triple("¥10", "约 40 万 tok", 10), Triple("¥50", "约 200 万 tok", 50), Triple("其他", "自定义金额", 0))
-    val balance = 4.08
-    val chosen = amounts[amount].third
-    val after = if (chosen > 0) balance + chosen else balance
-
-    DshScreen(modifier) {
-        DshNavBar(onBack = onBack, title = "充值余额", stacked = true)
-
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = Space.lg),
-        ) {
-            Spacer(Modifier.height(14.dp))
-
-            // —— 当前余额（soft 卡；赠金与本金分列）——
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.soft)
-                    .padding(horizontal = 15.dp, vertical = 13.dp),
-            ) {
-                Text(
-                    "当前充值余额",
-                    style = Type.meta.copy(fontWeight = FontWeight.SemiBold),
-                    color = c.ink3,
-                )
-                Spacer(Modifier.height(3.dp))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text("¥", style = Type.sec, color = c.ink2, modifier = Modifier.padding(bottom = 6.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("4.08", style = Type.h1.copy(fontSize = 26.sp), color = c.ink)
-                }
-                Text(
-                    "赠金余额 ¥0.00 · 赠金不可退",
-                    style = Type.meta,
-                    color = c.ink3,
-                    modifier = Modifier.padding(top = 5.dp),
-                )
-            }
-
-            Spacer(Modifier.height(14.dp))
-            DshFieldGroup(label = "选择金额") {
-                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    amounts.forEachIndexed { i, (a, d, _) ->
-                        S36AmountPick(
-                            amount = a,
-                            desc = d,
-                            selected = amount == i,
-                            modifier = Modifier.weight(1f),
-                            onClick = { amount = i },
-                        )
-                    }
-                }
-            }
-
-            DshFieldGroup(label = "支付方式") {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.card)
-                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-                ) {
-                    DshMRow(
-                        title = "微信支付",
-                        icon = DshIcons.Chat,
-                        iconTone = ChipTone.Ok,
-                        trailing = {
-                            Icon(
-                                if (pay == 0) DshIcons.RadioButtonChecked else DshIcons.RadioButtonUnchecked,
-                                null,
-                                Modifier.size(19.dp),
-                                tint = if (pay == 0) c.brand else c.ink3,
-                            )
-                        },
-                        onClick = { pay = 0 },
-                    )
-                    DshDivider()
-                    DshMRow(
-                        title = "支付宝",
-                        icon = DshIcons.AccountBalance,
-                        trailing = {
-                            Icon(
-                                if (pay == 1) DshIcons.RadioButtonChecked else DshIcons.RadioButtonUnchecked,
-                                null,
-                                Modifier.size(19.dp),
-                                tint = if (pay == 1) c.brand else c.ink3,
-                            )
-                        },
-                        onClick = { pay = 1 },
-                    )
-                    DshDivider()
-                    DshMRow(
-                        title = "对公转账 / 发票",
-                        subtitle = "需企业管理员开通",
-                        icon = DshIcons.ReceiptLong,
-                        iconTone = ChipTone.Neutral,
-                        chevron = true,
-                        onClick = onTransfer,
-                    )
-                }
-            }
-
-            // —— 到账预览 ——
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .padding(horizontal = 13.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("充值后余额", style = Type.sec, color = c.ink3)
-                Spacer(Modifier.weight(1f))
-                Text(
-                    "¥${"%.2f".format(after)}",
-                    style = Type.rowTitle.copy(fontWeight = FontWeight.Bold),
-                    color = c.ink,
-                )
-            }
-
-            Spacer(Modifier.height(14.dp))
-            DshBtn("支付并充值", onClick = onPay)
-
-            Text(
-                "按模型计费，缓存命中的输入部分按折扣价计；余额不足时任务会在请求前停下，不会静默欠费。",
-                style = Type.meta.copy(lineHeight = 17.sp),
-                color = c.ink3,
-                modifier = Modifier.padding(top = 10.dp),
-            )
-            Spacer(Modifier.height(8.dp))
-        }
-    }
-}
-
-/** S36 金额选项卡（居中：金额 + 约算 tok） */
-@Composable
-private fun S36AmountPick(
-    amount: String,
-    desc: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val c = DshTheme.colors
-    Column(
-        modifier
-            .clip(RoundedCornerShape(Radius.xl))
-            .background(if (selected) c.soft else c.card)
-            .border(
-                BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) c.brand else c.line),
-                RoundedCornerShape(Radius.xl),
-            )
-            .clickable { onClick() }
-            .padding(vertical = 11.dp, horizontal = 10.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            amount,
-            style = Type.rowTitle.copy(fontWeight = FontWeight.Bold),
-            color = if (selected) c.brand else c.ink,
-        )
-        Text(
-            desc,
-            style = Type.meta.copy(fontSize = 10.sp),
-            color = c.ink3,
-            modifier = Modifier.padding(top = 2.dp),
-            maxLines = 1,
-        )
     }
 }
 
@@ -1592,3 +1189,4 @@ private fun buildNoteText(text: String, boldPrefix: String?, boldColor: Color): 
         append(text.removePrefix(boldPrefix))
     }
 }
+

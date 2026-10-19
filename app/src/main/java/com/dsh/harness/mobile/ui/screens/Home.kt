@@ -578,7 +578,6 @@ fun BoxScope.S3ServiceSheet(
     onDismiss: () -> Unit,
     serviceRunning: Boolean = true,
     servicePort: String = ":3081",
-    nasConnected: Boolean = false,
     codeViewOn: Boolean = true,
     onCodeViewChange: (Boolean) -> Unit = {},
     onTermux: () -> Unit = {},
@@ -635,21 +634,6 @@ fun BoxScope.S3ServiceSheet(
                     icon = DshIcons.Add,
                     chevron = true,
                     onClick = onNewSession,
-                )
-                DshDivider()
-                DshMRow(
-                    title = "NAS 连接",
-                    subtitle = "未连接 · 可作工作区来源或备份目标",
-                    icon = DshIcons.Dns,
-                    iconTone = ChipTone.Neutral,
-                    trailing = {
-                        DshChip(
-                            if (nasConnected) "已连接" else "未连接",
-                            tone = if (nasConnected) ChipTone.Ok else ChipTone.Warn,
-                            mini = true,
-                        )
-                    },
-                    onClick = onNas,
                 )
                 DshDivider()
                 DshMRow(

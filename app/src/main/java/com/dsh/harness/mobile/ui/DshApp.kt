@@ -59,15 +59,12 @@ sealed interface Route {
     data object S13Automation : Route
     data object S14Settings : Route
     data object S15Account : Route
-    data object S16Nas : Route
 
     // 二级页
     data object S5ChatRunning : Route
     data object S6ChatResult : Route
     data object S8Trajectory : Route
     data object S10Command : Route
-    data object S17NasForm : Route
-    data object S18NasOffline : Route
 
     // v11 插件生态：S12 分流 → 内置(S19/S20) 与市场(S21/S22/S23) 两条独立路径
     data object S19BuiltinPlugins : Route
@@ -85,9 +82,7 @@ sealed interface Route {
     data object S31AccountLogin : Route      // DeepSeek 账号登录
     data object S32AccountLoggedOut : Route  // 账号与余额 · 未登录
     data object S33AgentPresets : Route      // Agent 预设列表
-    data object S34NasEmpty : Route          // NAS · 未连接空态
     data object S35Usage : Route             // 用量与账单明细
-    data object S36TopUp : Route             // 充值
     data object S37ApiKeyConfigured : Route  // API 密钥 · 已配置态
     data object S39ProviderEdit : Route      // 编辑模型提供方
     data object S40NewTask : Route           // 新建自动化任务
@@ -160,7 +155,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     // —— 全局连接态 ——
     // v27：删掉了 accountLoggedIn 这个假状态（local mutableState，与真实凭据脱钩）。
     // 「是否可跑任务」现在只有一个真相源：apiKey.configured（读 dsh 凭据存储）。
-    var nasConnected by remember { mutableStateOf(false) }
+    // v29：同样删掉 nasConnected 假状态 —— 本 harness 无 NAS 同步后端，连接态无从谈起。
     // svc Sheet 的「代码视图」开关（S3 首页与 Sheet 共享，提升到根）
     var codeViewOn by remember { mutableStateOf(true) }
     // v23：S3 输入框内容与「@提及」Sheet 状态提升到根 ——
@@ -487,7 +482,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         dark = dark,
                         onToggleDark = { dark = it },
                         keyConfigured = apiKey.configured,
-                        nasConnected = nasConnected,
                         onAccount = {
                             // 未登录进 S31 登录页；已登录进 S15 账号与余额
                             nav.go(if (apiKey.configured) Route.S15Account else Route.S31AccountLogin)
@@ -503,9 +497,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onModelDefault = { nav.go(Route.S30ModelDefault) },
                         onAddProvider = { nav.go(Route.S25Provider) },
                         onPresets = { nav.go(Route.S33AgentPresets) },
-                        onNas = {
-                            nav.go(if (nasConnected) Route.S16Nas else Route.S34NasEmpty)
-                        },
                         onSearch = { nav.go(Route.S45GlobalSearch) },
                         onTermux = { nav.go(Route.S27Termux) },
                     )
@@ -522,7 +513,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
 
                     Route.S15Account -> S15Account(
                         onBack = { nav.backOrHome() },
-                        onTopUp = { nav.go(Route.S36TopUp) },
                         onUsage = { nav.go(Route.S35Usage) },
                         onLogout = { sheet = SheetKind.Logout },
                         onAddProvider = { nav.go(Route.S25Provider) },
@@ -573,7 +563,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     Route.S32AccountLoggedOut -> S32AccountLoggedOut(
                         onBack = { nav.backOrHome() },
                         onLogin = { nav.go(Route.S31AccountLogin) },
-                        onTopUpBlocked = { toast = "登录后才能充值" },
+                        onTopUpBlocked = { toast = "此版本不提供充值" },
                         onUsage = { nav.go(Route.S35Usage) },
                         onAddProvider = { nav.go(Route.S25Provider) },
                     )
@@ -586,21 +576,10 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onDuplicate = { toast = "已复制预设副本" },
                     )
 
-                    Route.S34NasEmpty -> S34NasEmpty(
-                        onBack = { nav.backOrHome() },
-                        onConnect = { nav.go(Route.S17NasForm) },
-                    )
-
                     Route.S35Usage -> S35Usage(
                         onBack = { nav.backOrHome() },
                         onExport = { nav.go(Route.S46Export) },
                         onOpenSession = { nav.go(Route.S5ChatRunning) },
-                    )
-
-                    Route.S36TopUp -> S36TopUp(
-                        onBack = { nav.backOrHome() },
-                        onPay = { toast = "支付通道未接入 · 演示页" },
-                        onTransfer = { toast = "对公转账信息已复制" },
                     )
 
                     Route.S37ApiKeyConfigured -> S37ApiKeyConfigured(
@@ -717,21 +696,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         },
                     )
 
-                    Route.S16Nas -> S16Nas(
-                        onBack = { nav.backOrHome() },
-                        onAdd = { nav.go(Route.S17NasForm) },
-                    )
-
-                    Route.S17NasForm -> S17NasForm(
-                        onBack = { nav.backOrHome() },
-                        onTest = { nav.backOrHome() },
-                    )
-
-                    Route.S18NasOffline -> S18NasOffline(
-                        onBack = { nav.backOrHome() },
-                        onReconnect = { nav.replace(Route.S3Home) },
-                        onFallbackLocal = { nav.replace(Route.S3Home) },
-                    )
                 }
             }
 
@@ -782,7 +746,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     onDismiss = { sheet = SheetKind.None },
                     serviceRunning = connection == DshViewModel.ClientPhase.Ready,
                     servicePort = ":3081",
-                    nasConnected = nasConnected,
                     codeViewOn = codeViewOn,
                     onCodeViewChange = { codeViewOn = it },
                     onTermux = {
@@ -792,10 +755,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     onNewSession = {
                         sheet = SheetKind.None
                         nav.go(Route.S49NewTermuxSession)
-                    },
-                    onNas = {
-                        sheet = SheetKind.None
-                        nav.go(if (nasConnected) Route.S16Nas else Route.S34NasEmpty)
                     },
                     onExport = {
                         sheet = SheetKind.None
@@ -890,6 +849,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 onTermux = { drawerOpen = false; nav.go(Route.S27Termux) },
                 onArchived = { drawerOpen = false; nav.go(Route.S48Archived) },
                 liveSessions = sessions,
+                keyConfigured = apiKey.configured,
             )
 
             // —— 一次性轻提示（脱敏日志路径、安装结果等）——
