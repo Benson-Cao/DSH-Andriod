@@ -291,7 +291,17 @@ fun DshEmpty(text: String, modifier: Modifier = Modifier, icon: ImageVector? = n
 
 // ============================ 屏幕外壳 ============================
 
-/** 一屏的标准外壳：状态栏占位 → 内容 → 底部手势区留白。所有 18 屏统一套这个。 */
+/**
+ * 一屏的标准外壳：状态栏占位 → 内容 → 底部手势区留白。所有屏统一套这个。
+ *
+ * v26 方案 B：内容区外面加了一层**最大宽约束 + 居中**的 Column。
+ * 手机（Compact）DshDimens.contentMax = 1000dp，屏宽远小于它 → widthIn
+ * 不触发，布局与 v25 逐像素一致；折叠屏展开/平板才收窄，避免一行文字
+ * 横跨 800dp 那种"很空"的观感。
+ *
+ * 加这层不影响既有语义：内层仍是 ColumnScope，`weight(1f)` 在内部分配、
+ * `fillMaxSize` 填满内层(=外层剩余高度)，与 v25 外层直挂等价。
+ */
 @Composable
 fun DshScreen(
     modifier: Modifier = Modifier,
@@ -305,7 +315,15 @@ fun DshScreen(
             .background(c.bg),
     ) {
         DshStatusBarSpacer()
-        content()
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .widthIn(max = DshDimens.contentMax)
+                .align(Alignment.CenterHorizontally),
+        ) {
+            content()
+        }
         if (bottomBar) {
             Spacer(Modifier.navigationBarsPadding())
             Spacer(Modifier.height(10.dp))

@@ -11,6 +11,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -796,16 +800,20 @@ fun S21MarketDiscover(
             actions = { DshChip("dsh-market", tone = ChipTone.Purple) },
         )
 
-        LazyColumn(
-            Modifier
+        // v26 方案 B 断点响应式：Compact 单列（= v25 行为），Medium 双列、Expanded 三列。
+        // 2953 条精选在大屏上单列要滚很久 —— 这是断点最直接的收益。
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(DshDimens.listColumns),
+            modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = Space.lg),
+                .padding(horizontal = DshDimens.pageH),
             contentPadding = PaddingValues(top = 10.dp, bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             // 搜索卡（设计稿里是静态占位，点它进 S45 全局搜索）
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -822,7 +830,7 @@ fun S21MarketDiscover(
                 }
             }
 
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 PlugNoteCard(
                     icon = DshIcons.Hub,
                     iconTint = c.purple,
@@ -842,7 +850,7 @@ fun S21MarketDiscover(
             }
 
             // 分类横滑
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -854,7 +862,7 @@ fun S21MarketDiscover(
             }
 
             // 排序段 + CLI
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     DshSeg(
                         options = listOf("最热", "最新", "最早"),
@@ -869,13 +877,13 @@ fun S21MarketDiscover(
 
             // —— 状态区：加载中 / 失败 / 未加载（安装引导）/ 列表 ——
             when {
-                loading -> item { PlugLoading(Modifier.fillMaxWidth()) }
+                loading -> item(span = { GridItemSpan(maxLineSpan) }) { PlugLoading(Modifier.fillMaxWidth()) }
 
-                error != null -> item {
+                error != null -> item(span = { GridItemSpan(maxLineSpan) }) {
                     PlugError(message = error, onRetry = onRetry, modifier = Modifier.fillMaxWidth())
                 }
 
-                catalog == null -> item {
+                catalog == null -> item(span = { GridItemSpan(maxLineSpan) }) {
                     // 还没拉过：安装引导卡（把设计稿给的那条命令原样交出去）
                     Column(
                         Modifier
@@ -904,15 +912,15 @@ fun S21MarketDiscover(
                     }
                 }
 
-                plugins.isEmpty() -> item {
+                plugins.isEmpty() -> item(span = { GridItemSpan(maxLineSpan) }) {
                     DshEmpty("该分类下暂无插件", icon = DshIcons.Hub, modifier = Modifier.fillMaxWidth())
                 }
 
                 else -> {
-                    items(plugins, key = { it.name }) { p ->
+                    gridItems(plugins, key = { it.name }) { p ->
                         MarketCard(p, onClick = { onOpenDetail(p.name) })
                     }
-                    item {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(DshIcons.Info, null, Modifier.size(12.dp), tint = c.ink3)
                             Spacer(Modifier.width(5.dp))
