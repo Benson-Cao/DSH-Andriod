@@ -98,12 +98,13 @@ public final class DshSync {
     }
 
     public static void configure(Context ctx, String url, String user, String pass, int intervalSec) {
-        prefs(ctx).edit()
+        // pass == null 表示「保留原密码」（设置页密码留空时用于不覆盖已存凭据）
+        SharedPreferences.Editor e = prefs(ctx).edit()
             .putString("url", url == null ? "" : url.trim())
             .putString("user", user == null ? "" : user.trim())
-            .putString("pass", pass == null ? "" : pass)
-            .putInt("interval", intervalSec < 30 ? 30 : intervalSec)
-            .apply();
+            .putInt("interval", intervalSec < 30 ? 30 : intervalSec);
+        if (pass != null) e.putString("pass", pass);
+        e.apply();
         Log.i(TAG, "同步配置已更新：url=" + url + " interval=" + intervalSec + "s");
     }
 
@@ -113,6 +114,24 @@ public final class DshSync {
 
     public static String url(Context ctx)   { return prefs(ctx).getString("url", ""); }
     public static String user(Context ctx)  { return prefs(ctx).getString("user", ""); }
+
+    /** 连通性测试（设置页「测试连接」）。不落盘；pass 为 null 时用已存密码。 */
+    public static boolean testConnection(Context ctx, String url, String user, String pass) {
+        String u = url == null ? "" : url.trim();
+        String us = user == null ? "" : user.trim();
+        if (u.length() == 0 || us.length() == 0) return false;
+        String p = pass == null ? prefs(ctx).getString("pass", "") : pass;
+        return new DshWebDavClient(u, us, p).ping();
+    }
+
+    /** 清除 NAS 同步配置（凭据一并删除）。设置页「断开」按钮调用。 */
+    public static void clear(Context ctx) {
+        prefs(ctx).edit()
+            .remove("url").remove("user").remove("pass").remove("interval")
+            .apply();
+        Log.i(TAG, "同步配置已清除");
+    }
+
     // 密码不提供读取接口 —— 避免被日志/UI 意外带出
 
     /** 设备标识：用于冲突副本名，让用户一眼看出是哪台设备产生的冲突。 */

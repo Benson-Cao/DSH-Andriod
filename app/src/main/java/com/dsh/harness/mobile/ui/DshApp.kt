@@ -101,7 +101,8 @@ sealed interface Route {
     data object S48Archived : Route          // 归档会话
     data object S49NewTermuxSession : Route  // Termux 新建终端会话
     // v30：SAF 存储目录桥（取代 v29 删掉的 NAS 假页面）
-    data object S50StorageDir : Route
+    data object S50StorageDir : Route        // SAF 外部存储目录桥
+    data object S51NasSync : Route           // NAS 连接（飞牛 fnOS WebDAV 同步）
 }
 
 /** 浮动层（Sheet），独立于路由栈。
@@ -534,6 +535,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onSearch = { nav.go(Route.S45GlobalSearch) },
                         onTermux = { nav.go(Route.S27Termux) },
                         onStorage = { nav.go(Route.S50StorageDir) },
+                        onNas = { nav.go(Route.S51NasSync) },
                     )
 
                     // —— API 密钥：写入 dsh 的 credentials 存储（$DSH_HOME/.credentials.yaml）——
@@ -745,6 +747,10 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onBack = { nav.backOrHome() },
                         refreshTick = safTick,
                         onPick = { safLauncher.launch(null) },
+                    )
+
+                    Route.S51NasSync -> S51NasSync(
+                        onBack = { nav.backOrHome() },
                     )
 
                 }
