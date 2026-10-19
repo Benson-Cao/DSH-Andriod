@@ -65,6 +65,8 @@ fun S3Home(
     onOpenDrawer: () -> Unit,
     onPickWorkspace: () -> Unit,
     onPickMode: () -> Unit,
+    /** v24：工具行「+」按钮 —— 添加附件/引用（打开「提及」选择器） */
+    onAddAttachment: () -> Unit = {},
     /** 点输入框右下角模型名 → 唤起 S29 模型选择器 */
     onPickModel: () -> Unit = {},
     onSend: (String) -> Unit,
@@ -229,23 +231,36 @@ fun S3Home(
                     DshIBtn(
                         DshIcons.AddCircleOutline, "添加附件",
                         enabled = workspaceChosen,
-                        onClick = {},
+                        // v24：接线到「提及」选择器（与输入 @ 同一个 Sheet）。
+                        // 此前 onClick = {} 空实现，用户实测"点击＋号无反应"。
+                        onClick = onAddAttachment,
                     )
                     DshTextDropdown(
                         text = "工作区内修改",
                         onClick = onPickMode,
                         enabled = workspaceChosen,
                     )
-                    Spacer(Modifier.weight(1f))
                     // 模型名 + 思考强度同行（点开进 S29）
+                    // v24：本区域参与 weight —— 此前模型名 Text 不换行不省略，
+                    // 窄屏上把发送键整个挤出容器（用户实测"首页还是没有发送按钮"）。
+                    // 现在超长模型名在内部 ellipsis，发送键常驻右侧。
                     Row(
                         Modifier
+                            .weight(1f)
                             .then(if (workspaceChosen) Modifier.clickable { onPickModel() } else Modifier)
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        horizontalArrangement = Arrangement.End,
                     ) {
-                        Text(modelName, style = Type.chip, color = c.ink2, maxLines = 1)
+                        Text(
+                            modelName,
+                            style = Type.chip,
+                            color = c.ink2,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Spacer(Modifier.width(3.dp))
                         Text(thinking, style = Type.meta, color = c.ink3)
                         Icon(
                             DshIcons.ExpandMore, null, Modifier.size(14.dp),

@@ -155,6 +155,41 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
     /** S23「导出脱敏日志」：返回落盘路径，失败为 null */
     fun exportRedactedLog(): String? = catalogLoader.writeRedactedLog(_catalog.value)?.absolutePath
 
+    // ==================== 插件市场精选目录（S21/S22） ====================
+
+    /**
+     * 社区市场精选目录。数据源是 npm 上的 dsh-plugin-catalog 包
+     * （china 路由走 npmmirror），与 dshmarket 包自己的 regions.js 一致。
+     * null = 还没拉过 / 拉失败。
+     */
+    private val _marketCatalog = MutableStateFlow<DshMarketCatalog.Catalog?>(null)
+    val marketCatalog: StateFlow<DshMarketCatalog.Catalog?> = _marketCatalog
+
+    private val _marketCatalogLoading = MutableStateFlow(false)
+    val marketCatalogLoading: StateFlow<Boolean> = _marketCatalogLoading
+
+    /** 拉取失败原因（网络不可达 / 解析失败）；重试会清掉 */
+    private val _marketCatalogError = MutableStateFlow<String?>(null)
+    val marketCatalogError: StateFlow<String?> = _marketCatalogError
+
+    /** 进入市场页时拉一次；已在 loading 或已有数据则跳过 */
+    fun refreshMarketCatalog(force: Boolean = false) {
+        if (_marketCatalogLoading.value) return
+        if (!force && _marketCatalog.value != null) return
+        _marketCatalogLoading.value = true
+        _marketCatalogError.value = null
+        viewModelScope.launch {
+            try {
+                _marketCatalog.value = DshMarketCatalog.load()
+            } catch (t: Throwable) {
+                Log.w(TAG, "市场目录拉取失败", t)
+                _marketCatalogError.value = t.message ?: "市场目录拉取失败"
+            } finally {
+                _marketCatalogLoading.value = false
+            }
+        }
+    }
+
     // ==================== API 密钥（S19 API Key） ====================
 
     private val credentials = DshCredentials(app)

@@ -9,6 +9,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import com.dsh.harness.mobile.data.DshEnvProbe
+import com.dsh.harness.mobile.data.DshMarketCatalog
 import com.dsh.harness.mobile.data.DshPluginCatalog
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
@@ -728,23 +731,62 @@ fun S20BuiltinPluginConfig(
  * 所以市场列表**没有真实数据源**。按设计稿自己的规则处理：
  * 显示"需先安装市场本体" + 那条 CLI 命令，而不是拿稿子里的示意插件名充数。
  */
+/**
+ * S21 分类横滑条的分类 key（顺序即设计稿的九个分类）。
+ * index.json 里 category 是具名 key（ui/theme/model/...），中文标题取自
+ * metadata.categories；索引里没有对应分类条目时回落这里的兜底名。
+ */
+private val S21_CAT_KEYS = listOf(null, "ui", "theme", "model", "session", "memory", "tools", "skill", "workflow")
+
 @Composable
 fun S21MarketDiscover(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onOpenInstalled: () -> Unit = {},
     onOpenThemes: () -> Unit = {},
-    /** 真实市场插件；本机为空（未装市场），空时显示安装引导 */
-    plugins: List<MarketPlugin> = emptyList(),
-    /** 市场本体是否已安装 */
+    /** v24：真实市场精选目录（dsh-plugin-catalog 包）；null = 未加载 */
+    catalog: DshMarketCatalog.Catalog? = null,
+    loading: Boolean = false,
+    error: String? = null,
+    onRetry: () -> Unit = {},
+    /** dsh web UI 的市场本体是否已安装（与 App 复刻市场的数据源无关） */
     marketInstalled: Boolean = false,
     /** v20：搜索卡 → S45 全局搜索 */
     onSearch: () -> Unit = {},
+    /** v24：点条目进 S22 详情 */
+    onOpenDetail: (String) -> Unit = {},
 ) {
     val c = DshTheme.colors
     var cat by remember { mutableStateOf(0) }
     var sort by remember { mutableStateOf(0) }
-    val cats = listOf("全部", "UI 增强", "主题与外观", "模型与账号接入", "会话与消息", "记忆", "工具与能力", "技能包", "工作流与自动化")
+
+    // 分类中文名优先取索引自带的双语标题，取不到用兜底名
+    val catNames = S21_CAT_KEYS.map { key ->
+        key?.let { catalog?.categories?.get(it)?.first } ?: when (key) {
+            null -> "全部"
+            "ui" -> "UI 增强"
+            "theme" -> "主题与外观"
+            "model" -> "模型与账号接入"
+            "session" -> "会话与消息"
+            "memory" -> "记忆"
+            "tools" -> "工具与能力"
+            "skill" -> "技能包"
+            "workflow" -> "工作流与自动化"
+            else -> key
+        }
+    }
+
+    // 过滤 + 排序（最热 = 精选目录原顺序，即人工策展序）
+    val plugins = remember(catalog, cat, sort) {
+        val entries = catalog?.entries ?: emptyList()
+        val key = S21_CAT_KEYS.getOrNull(cat)
+        val filtered = if (key == null) entries else entries.filter { it.category == key }
+        when (sort) {
+            1 -> filtered.sortedByDescending { it.publishedAt }
+            2 -> filtered.sortedBy { it.publishedAt }
+            else -> filtered
+        }.map { it.toMarketPlugin(catalog?.categories ?: emptyMap()) }
+    }
 
     DshScreen(modifier, bottomBar = false) {
         DshNavBar(
@@ -754,112 +796,131 @@ fun S21MarketDiscover(
             actions = { DshChip("dsh-market", tone = ChipTone.Purple) },
         )
 
-        Column(
+        LazyColumn(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = Space.lg)
-                .padding(top = 10.dp),
+                .padding(horizontal = Space.lg),
+            contentPadding = PaddingValues(top = 10.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             // 搜索卡（设计稿里是静态占位，点它进 S45 全局搜索）
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .clickable { onSearch() }
-                    .padding(horizontal = 11.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(DshIcons.Search, null, Modifier.size(16.dp), tint = c.ink3)
-                Spacer(Modifier.width(8.dp))
-                Text("搜索插件，比如：通知、皮肤", style = Type.chip, color = c.ink3)
-            }
-            Spacer(Modifier.height(10.dp))
-
-            PlugNoteCard(
-                icon = DshIcons.Hub,
-                iconTint = c.purple,
-                title = if (marketInstalled) "精选列表 awesome-dsh-plugin" else "市场本体尚未安装",
-                subtitle = if (marketInstalled)
-                    "plugins.json · CI 每日同步 · 内置离线快照备用"
-                else
-                    "发现 / 主题 / 已安装三个 tab 都要先装市场本体才会出现",
-                trailing = {
-                    DshChip(
-                        text = if (marketInstalled) "今日已同步" else "未安装",
-                        tone = if (marketInstalled) ChipTone.Ok else ChipTone.Warn,
-                        mini = true,
-                    )
-                },
-            )
-            Spacer(Modifier.height(10.dp))
-
-            // 分类横滑
-            Row(
-                Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                cats.forEachIndexed { i, label ->
-                    DshChip(label, tone = if (cat == i) ChipTone.On else ChipTone.Neutral, onClick = { cat = i })
-                }
-            }
-            Spacer(Modifier.height(9.dp))
-
-            // 排序段 + CLI
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                DshSeg(
-                    options = listOf("最热", "最新", "最早"),
-                    selectedIndex = sort,
-                    onSelect = { sort = it },
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(8.dp))
-                DshChip("CLI", icon = DshIcons.Terminal, tone = ChipTone.Warn)
-            }
-            Spacer(Modifier.height(10.dp))
-
-            if (plugins.isEmpty()) {
-                // 安装引导：把设计稿给的那条命令原样交出去
-                Column(
+            item {
+                Row(
                     Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.warnSoft())
-                        .padding(14.dp),
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                        .clickable { onSearch() }
+                        .padding(horizontal = 11.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("先安装市场本体", style = Type.rowTitle, color = c.ink)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "社区市场是第三方插件，安装前会展示来源仓库、提交号与目录，" +
-                            "并默认禁止执行构建脚本。",
-                        style = Type.sec,
-                        color = c.ink2,
-                        lineHeight = 18.sp,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    DshCode(com.dsh.harness.mobile.data.DshMarketProbe.INSTALL_CMD)
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "装完回到本页，「发现 / 主题 / 已安装」三个 tab 即生效。",
-                        style = Type.meta,
-                        color = c.ink3,
-                    )
-                }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    plugins.forEach { p -> MarketCard(p) }
-                }
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(DshIcons.Info, null, Modifier.size(12.dp), tint = c.ink3)
-                    Spacer(Modifier.width(5.dp))
-                    Text("多数插件刷新页面即生效，无需重启服务", style = Type.meta, color = c.ink3)
+                    Icon(DshIcons.Search, null, Modifier.size(16.dp), tint = c.ink3)
+                    Spacer(Modifier.width(8.dp))
+                    Text("搜索插件，比如：通知、皮肤", style = Type.chip, color = c.ink3)
                 }
             }
-            Spacer(Modifier.height(12.dp))
+
+            item {
+                PlugNoteCard(
+                    icon = DshIcons.Hub,
+                    iconTint = c.purple,
+                    title = if (catalog != null) "精选列表 awesome-dsh-plugin" else "市场本体尚未安装",
+                    subtitle = if (catalog != null)
+                        "dsh-plugin-catalog · ${catalog.entries.size} 个插件 · ${catalog.categories.size} 个分类"
+                    else
+                        "发现 / 主题 / 已安装三个 tab 都要先装市场本体才会出现",
+                    trailing = {
+                        DshChip(
+                            text = if (catalog != null) "已同步" else "未安装",
+                            tone = if (catalog != null) ChipTone.Ok else ChipTone.Warn,
+                            mini = true,
+                        )
+                    },
+                )
+            }
+
+            // 分类横滑
+            item {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    catNames.forEachIndexed { i, label ->
+                        DshChip(label, tone = if (cat == i) ChipTone.On else ChipTone.Neutral, onClick = { cat = i })
+                    }
+                }
+            }
+
+            // 排序段 + CLI
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DshSeg(
+                        options = listOf("最热", "最新", "最早"),
+                        selectedIndex = sort,
+                        onSelect = { sort = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    DshChip("CLI", icon = DshIcons.Terminal, tone = ChipTone.Warn)
+                }
+            }
+
+            // —— 状态区：加载中 / 失败 / 未加载（安装引导）/ 列表 ——
+            when {
+                loading -> item { PlugLoading(Modifier.fillMaxWidth()) }
+
+                error != null -> item {
+                    PlugError(message = error, onRetry = onRetry, modifier = Modifier.fillMaxWidth())
+                }
+
+                catalog == null -> item {
+                    // 还没拉过：安装引导卡（把设计稿给的那条命令原样交出去）
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.xl))
+                            .background(c.warnSoft())
+                            .padding(14.dp),
+                    ) {
+                        Text("先安装市场本体", style = Type.rowTitle, color = c.ink)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "社区市场是第三方插件，安装前会展示来源仓库、提交号与目录，" +
+                                "并默认禁止执行构建脚本。",
+                            style = Type.sec,
+                            color = c.ink2,
+                            lineHeight = 18.sp,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        DshCode(com.dsh.harness.mobile.data.DshMarketProbe.INSTALL_CMD)
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "装完回到本页，「发现 / 主题 / 已安装」三个 tab 即生效。",
+                            style = Type.meta,
+                            color = c.ink3,
+                        )
+                    }
+                }
+
+                plugins.isEmpty() -> item {
+                    DshEmpty("该分类下暂无插件", icon = DshIcons.Hub, modifier = Modifier.fillMaxWidth())
+                }
+
+                else -> {
+                    items(plugins, key = { it.name }) { p ->
+                        MarketCard(p, onClick = { onOpenDetail(p.name) })
+                    }
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(DshIcons.Info, null, Modifier.size(12.dp), tint = c.ink3)
+                            Spacer(Modifier.width(5.dp))
+                            Text("多数插件刷新页面即生效，无需重启服务", style = Type.meta, color = c.ink3)
+                        }
+                    }
+                }
+            }
         }
 
         // —— 市场专属底栏（设计稿 .mkt-bar 52px）——
@@ -867,9 +928,22 @@ fun S21MarketDiscover(
     }
 }
 
-/** S21 的插件卡：名称 / 星标 / 描述 / 作者 + 标签 + 安装按钮。 */
+/** index.json 条目 → UI 层 MarketPlugin。索引里没有的字段（星标/下载量/能力清单）一律留空不渲染。 */
+internal fun DshMarketCatalog.Entry.toMarketPlugin(categories: Map<String, Pair<String, String>>): MarketPlugin = MarketPlugin(
+    name = name,
+    author = name.removePrefix("@").substringBefore('/').ifEmpty { "unknown" },
+    desc = descZh.ifEmpty { descEn },
+    version = version,
+    // 分类标签显示索引自带的中文标题
+    tags = if (category.isEmpty()) emptyList() else listOf(categories[category]?.first ?: category),
+    repo = repo,
+    // index.json 本身就是 awesome-dsh-plugin 精选目录，收录即精选
+    inCuratedList = true,
+)
+
+/** S21 的插件卡：名称 / 描述 / 作者 + 分类标签。整卡可点进 S22 详情。 */
 @Composable
-private fun MarketCard(p: MarketPlugin) {
+private fun MarketCard(p: MarketPlugin, onClick: () -> Unit) {
     val c = DshTheme.colors
     Column(
         Modifier
@@ -877,7 +951,7 @@ private fun MarketCard(p: MarketPlugin) {
             .clip(RoundedCornerShape(Radius.xl))
             .background(c.card)
             .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-            .clickable { }
+            .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 11.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1014,6 +1088,8 @@ fun S22MarketDetail(
     plugin: MarketPlugin,
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
+    /** v24：复制安装命令（真机无 pnpm 时由调用方给 toast 说明） */
+    onCopyInstall: () -> Unit = {},
     onConfirmInstall: () -> Unit = {},
 ) {
     val c = DshTheme.colors
@@ -1092,10 +1168,15 @@ fun S22MarketDetail(
             InstallConfirmBody(plugin)
 
             Spacer(Modifier.height(12.dp))
+            // v24：安装命令单独一块，方便复制后到 Termux 执行。
+            // 真机（Termux）默认没有 pnpm，而 dsh plugin 只是 pnpm 转发器 ——
+            // 所以这里不假装能一键安装，给命令 + 复制，缺什么说什么。
+            DshCode("dsh plugin --profile acp add ${plugin.name}")
+            Spacer(Modifier.height(10.dp))
             DshBtn(
-                text = "安装",
-                icon = DshIcons.FileDownload,
-                onClick = onConfirmInstall,
+                text = "复制安装命令",
+                icon = DshIcons.ContentPaste,
+                onClick = onCopyInstall,
             )
             Spacer(Modifier.height(12.dp))
         }
@@ -1403,58 +1484,4 @@ private fun StatCell(num: String, label: String, color: Color) {
         Text(num, style = Type.h1.copy(fontSize = 17.sp), color = color)
         Text(label, style = Type.meta.copy(fontSize = 9.5.sp), color = c.ink3)
     }
-}
-
-// ============================ S22 安装确认 Sheet ============================
-
-/**
- * 安装确认 Sheet。设计稿里它是盖在 S22 之上的 mask+sheet，
- * 标题「确认来源后安装」带警示图标，底部取消 / 确认安装 + 单独授权构建脚本。
- */
-@Composable
-fun BoxScope.S22InstallConfirmSheet(
-    plugin: MarketPlugin,
-    visible: Boolean,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
-) {
-    DshSheet(
-        visible = visible,
-        onDismiss = onDismiss,
-        maxHeightRatio = 0.84f,
-        header = {
-            DshSheetHeader(
-                title = "确认来源后安装",
-                icon = DshIcons.VerifiedUser,
-                iconTint = DshTheme.colors.warn,
-            )
-        },
-        content = {
-            InstallConfirmBody(plugin)
-            Spacer(Modifier.height(4.dp))
-        },
-        footer = {
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                DshBtn(
-                    text = "取消",
-                    tone = BtnTone.Ghost,
-                    modifier = Modifier.weight(1f),
-                    onClick = onDismiss,
-                )
-                DshBtn(
-                    text = "确认安装",
-                    modifier = Modifier.weight(1.5f),
-                    onClick = { onConfirm(); onDismiss() },
-                )
-            }
-            if (plugin.hasBuildScript) {
-                Spacer(Modifier.height(9.dp))
-                DshBtn(
-                    text = "单独授权构建脚本",
-                    tone = BtnTone.Ghost,
-                    onClick = {},
-                )
-            }
-        },
-    )
 }

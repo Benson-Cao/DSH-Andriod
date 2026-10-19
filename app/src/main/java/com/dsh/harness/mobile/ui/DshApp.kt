@@ -102,7 +102,7 @@ sealed interface Route {
 
 /** 浮动层（Sheet），独立于路由栈 */
 private enum class SheetKind {
-    None, Workspace, NewSession, More, Approval, Diagnostics, InstallConfirm, Model,
+    None, Workspace, NewSession, More, Approval, Diagnostics, Model,
     /** v20：S3 右上角「本机服务与快捷入口」 */
     Service,
     /** v20：S38 退出登录二次确认 */
@@ -185,14 +185,16 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     val catalogLoading by vm.catalogLoading.collectAsState()
     val apiKey by vm.apiKey.collectAsState()
     val apiKeySaved by vm.apiKeySaved.collectAsState()
+    // v24：社区市场精选目录（真实数据源 = npm 上的 dsh-plugin-catalog 包）
+    val marketCatalog by vm.marketCatalog.collectAsState()
+    val marketCatalogLoading by vm.marketCatalogLoading.collectAsState()
+    val marketCatalogError by vm.marketCatalogError.collectAsState()
 
     // 市场侧（S21/S22/S23）的数据源。
     // 本机 $HOME/node_modules/@deepseek-ai/ 下没有 dshmarket → 市场本体未安装，
     // 于是市场插件列表为空、页面走安装引导，而不是拿设计稿的示意名充数。
     val ctx = androidx.compose.ui.platform.LocalContext.current.applicationContext
     val marketInstalled = remember { DshMarketProbe.isInstalled(ctx) }
-    val marketPlugins = remember { emptyList<MarketPlugin>() }
-    val marketInstalledPlugins = remember { emptyList<MarketPlugin>() }
 
     // 首启动：没走过引导且没配密钥 → 进 S24 首次配置（在副作用里改路由，不在组合期）
     LaunchedEffect(startRoute, apiKey.configured) {
@@ -207,9 +209,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
         cm?.setPrimaryClip(ClipData.newPlainText("dsh", text))
     }
 
-    // S22 的安装确认 Sheet 要盖在详情页上，所以目标插件存在 state 里
-    var installTarget by remember { mutableStateOf<MarketPlugin?>(null) }
-
     // 一次性提示（脱敏日志落盘路径等）
     var toast by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(toast) {
@@ -222,6 +221,14 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     // 打开侧栏时拉一次真实会话列表（S4）
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) vm.refreshSessions()
+    }
+
+    // v24：进入市场页才拉精选目录（2.4MB tarball + 2.3MB 解析，
+    // 不该在冷启动就付这个代价；已有数据则 VM 内自动跳过）
+    LaunchedEffect(route) {
+        if (route is Route.S21MarketDiscover || route is Route.S22MarketDetail) {
+            vm.refreshMarketCatalog()
+        }
     }
 
     DshTheme(dark = dark) {
@@ -291,6 +298,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onOpenDrawer = { drawerOpen = true },
                         onPickWorkspace = { sheet = SheetKind.Workspace },
                         onPickMode = { sheet = SheetKind.NewSession },
+                        // v24：「+」= 添加附件/引用 → 与 @ 同一个「提及」选择器
+                        onAddAttachment = { mentionOpen = true },
                         onPickModel = { sheet = SheetKind.Model },
                         onSend = { text ->
                             vm.send(text)
@@ -396,26 +405,36 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         catalog = catalog,
                     )
 
-                    // —— v11 插件生态：dsh-market（本机未装市场 → 空态 + 安装引导）——
+                    // —— v11 插件生态：dsh-market（v24 起为真实精选目录数据）——
                     Route.S21MarketDiscover -> S21MarketDiscover(
                         onBack = { nav.backOrHome() },
                         onOpenInstalled = { nav.go(Route.S23MarketInstalled) },
                         onOpenThemes = { nav.go(Route.S23MarketInstalled) },
-                        plugins = marketPlugins,
+                        catalog = marketCatalog,
+                        loading = marketCatalogLoading,
+                        error = marketCatalogError,
+                        onRetry = { vm.refreshMarketCatalog(force = true) },
                         marketInstalled = marketInstalled,
                         onSearch = { nav.go(Route.S45GlobalSearch) },
+                        onOpenDetail = { nav.go(Route.S22MarketDetail(it)) },
                     )
 
                     is Route.S22MarketDetail -> {
-                        val p = marketPlugins.firstOrNull { it.name == r.name }
-                        if (p == null) {
-                            // 目标插件已不在索引源里（索引刷新过）：退回发现页而不是白屏
+                        // 取本地 val：by 委托属性做不了 smart cast
+                        val catalog = marketCatalog
+                        val entry = catalog?.entries?.firstOrNull { it.name == r.name }
+                        if (catalog == null || entry == null) {
+                            // 目录还没拉到 / 目标插件已不在索引源里：退回发现页而不是白屏
                             LaunchedEffect(r.name) { nav.backOrHome() }
                         } else {
                             S22MarketDetail(
-                                plugin = p,
+                                plugin = entry.toMarketPlugin(catalog.categories),
                                 onBack = { nav.backOrHome() },
-                                onConfirmInstall = { installTarget = p; sheet = SheetKind.InstallConfirm },
+                                // 复制安装命令；真机 Termux 默认无 pnpm，把前提说清楚
+                                onCopyInstall = {
+                                    copyText(ctx, "dsh plugin --profile acp add ${entry.name}")
+                                    toast = "已复制安装命令 · 需 Termux 内有 pnpm（dsh plugin 只是 pnpm 转发器）"
+                                },
                             )
                         }
                     }
@@ -424,7 +443,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onBack = { nav.backOrHome() },
                         onOpenDiscover = { nav.backOrHome() },
                         onOpenThemes = {},
-                        installed = marketInstalledPlugins,
+                        installed = emptyList(),
                         marketInstalled = marketInstalled,
                         onExportLog = { toast = vm.exportRedactedLog() },
                     )
@@ -734,18 +753,6 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     log = diagnostics,
                     error = error,
                 )
-
-                SheetKind.InstallConfirm -> {
-                    val target = installTarget
-                    if (target != null) {
-                        S22InstallConfirmSheet(
-                            plugin = target,
-                            visible = true,
-                            onDismiss = { sheet = SheetKind.None; installTarget = null },
-                            onConfirm = { toast = "安装任务已提交 · 刷新页面即可生效" },
-                        )
-                    }
-                }
 
                 SheetKind.Model -> Unit
 
