@@ -103,6 +103,7 @@ sealed interface Route {
     // v30：SAF 存储目录桥（取代 v29 删掉的 NAS 假页面）
     data object S50StorageDir : Route        // SAF 外部存储目录桥
     data object S51NasSync : Route           // NAS 连接（飞牛 fnOS WebDAV 同步）
+    data object S52NasAdd : Route             // 添加 NAS 连接（表单）
 }
 
 /** 浮动层（Sheet），独立于路由栈。
@@ -751,6 +752,12 @@ fun DshApp(startRoute: Route = Route.S3Home) {
 
                     Route.S51NasSync -> S51NasSync(
                         onBack = { nav.backOrHome() },
+                        onAdd = { nav.go(Route.S52NasAdd) },
+                    )
+
+                    Route.S52NasAdd -> S52NasAdd(
+                        onBack = { nav.backOrHome() },
+                        onSaved = { nav.backOrHome() },
                     )
 
                 }
