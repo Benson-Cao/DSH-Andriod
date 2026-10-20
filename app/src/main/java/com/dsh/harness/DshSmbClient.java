@@ -30,6 +30,12 @@ final class DshSmbClient implements DshSync.NasTransport {
     private final String share;
     private final CIFSContext ctx;
 
+    /** 最近一次失败的人类可读原因（v30.6：透出到「连接并测试」）。 */
+    private String lastError = "";
+
+    @Override
+    public String lastError() { return lastError; }
+
     DshSmbClient(String host, String port, String share, String user, String pass) {
         this.host = host == null ? "" : host.trim();
         int p;
@@ -60,12 +66,43 @@ final class DshSmbClient implements DshSync.NasTransport {
 
     @Override
     public boolean ping() {
+        lastError = "";
         try {
             SmbFile root = new SmbFile(base(), ctx);
             root.listFiles();   // 触发连接 + 鉴权
             return true;
+        } catch (jcifs.smb.SmbException e) {
+            String m = e.getMessage() == null ? "" : e.getMessage();
+            if (m.contains("Access is denied") || m.contains("Access Denied")) {
+                lastError = "SMB 可达，但该账号无此共享目录的访问权限";
+            } else if (m.contains("auth") || m.contains("Auth") || m.contains("logon")) {
+                lastError = "SMB 可达，但账号或密码不对（" + m + "）";
+            } else {
+                lastError = "SMB 响应异常：" + m;
+            }
+            Log.w(TAG, "ping 失败: " + m);
+            return false;
+        } catch (java.io.IOException e) {
+            // jcifs 只声明抛 SmbException/MalformedURLException；底层超时/拒连会包在
+            // IOException 链里，运行时按具体类型细分（编译期不能单独 catch，会报"永不抛出"）
+            if (e instanceof java.net.SocketTimeoutException) {
+                lastError = "连接超时——确认手机与 NAS 在同一网络，且已开启 SMB 共享";
+            } else if (e instanceof java.net.ConnectException) {
+                lastError = "无法建立 SMB 连接——确认 IP/端口(445)正确、NAS 已开启 SMB";
+            } else {
+                lastError = "连接失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+            }
+            Log.w(TAG, "ping 失败: " + e.getMessage());
+            return false;
         } catch (Throwable t) {
-            Log.w(TAG, "ping 失败: " + t.getMessage());
+            String m = t.getMessage() == null ? "" : t.getMessage();
+            if (m.contains("Connection refused") || m.contains("unreachable")
+                    || m.contains("UnknownHost") || m.contains("Connect")) {
+                lastError = "无法建立 SMB 连接——确认 IP/端口(445)正确、NAS 已开启 SMB";
+            } else {
+                lastError = "连接失败：" + (m.isEmpty() ? t.getClass().getSimpleName() : m);
+            }
+            Log.w(TAG, "ping 失败: " + m);
             return false;
         }
     }

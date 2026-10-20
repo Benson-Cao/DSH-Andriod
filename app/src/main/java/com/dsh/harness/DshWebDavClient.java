@@ -48,6 +48,12 @@ final class DshWebDavClient implements DshSync.NasTransport {
     private final String user;
     private final String pass;
 
+    /** 最近一次失败的是人类可读原因（v30.6：设置页「连接并测试」直接展示，不再吞成一句"失败"）。 */
+    private String lastError = "";
+
+    @Override
+    public String lastError() { return lastError; }
+
     DshWebDavClient(String baseUrl, String user, String pass) {
         // 去掉末尾斜杠，避免拼出 // 导致部分服务端路径解析异常
         String b = baseUrl == null ? "" : baseUrl.trim();
@@ -82,6 +88,26 @@ final class DshWebDavClient implements DshSync.NasTransport {
     private HttpURLConnection open(String method, String urlPath) throws IOException {
         URL u = new URL(baseUrl + urlPath);
         HttpURLConnection c = (HttpURLConnection) u.openConnection();
+        // fnOS 等 NAS 的 HTTPS(5006) 普遍是自签名证书，系统默认信任链必然握手失败。
+        // 局域网工具场景下放行自签名（仅本客户端；不做全局信任库改动）。
+        if (c instanceof javax.net.ssl.HttpsURLConnection) {
+            javax.net.ssl.HttpsURLConnection h = (javax.net.ssl.HttpsURLConnection) c;
+            try {
+                javax.net.ssl.TrustManager[] tm = new javax.net.ssl.TrustManager[]{
+                    new javax.net.ssl.X509TrustManager() {
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] ch, String a) { }
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] ch, String a) { }
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+                    }
+                };
+                javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+                sc.init(null, tm, new java.security.SecureRandom());
+                h.setSSLSocketFactory(sc.getSocketFactory());
+                h.setHostnameVerifier((hostname, session) -> true);
+            } catch (Exception e) {
+                Log.w(TAG, "HTTPS 放行初始化失败: " + e.getMessage());
+            }
+        }
         c.setRequestMethod(method);
         c.setConnectTimeout(CONNECT_TIMEOUT_MS);
         c.setReadTimeout(READ_TIMEOUT_MS);
@@ -292,6 +318,7 @@ final class DshWebDavClient implements DshSync.NasTransport {
     @Override
     public boolean ping() {
         HttpURLConnection c = null;
+        lastError = "";
         try {
             c = open("PROPFIND", "/");
             c.setDoOutput(true);
@@ -302,10 +329,42 @@ final class DshWebDavClient implements DshSync.NasTransport {
             os.flush();
             os.close();
             int code = c.getResponseCode();
-            // 207 Multi-Status 是 WebDAV 正常应答；401 说明能连但凭证不对
-            return code == 207 || code == 200 || code == 401;
+            // 207 Multi-Status 是 WebDAV 正常应答；200 兜底。
+            // ⚠️ 401 不再当成功：那是"服务器可达但凭证不对"，测试页必须如实报错。
+            if (code == 207 || code == 200) return true;
+            if (code == 401) {
+                lastError = "服务器可达，但账号或密码不对（HTTP 401）";
+            } else if (code == 403) {
+                lastError = "账号或密码不对，或该账号无 WebDAV 权限（HTTP 403）";
+            } else if (code == 404) {
+                lastError = "服务端没有 WebDAV 根路径（HTTP 404），确认 fnOS 已开启 WebDAV 服务";
+            } else {
+                lastError = "服务器响应异常（HTTP " + code + "）";
+            }
+            Log.w(TAG, "ping -> " + code);
+            return false;
+        } catch (javax.net.ssl.SSLHandshakeException e) {
+            lastError = "HTTPS 证书校验失败：" + e.getMessage();
+            return false;
+        } catch (java.net.SocketTimeoutException e) {
+            lastError = "连接超时——确认手机与 NAS 在同一网络，且 IP/端口正确";
+            return false;
+        } catch (java.net.ConnectException e) {
+            lastError = "无法建立连接——确认 NAS IP 正确、对应服务已开启";
+            return false;
+        } catch (java.io.IOException e) {
+            // 明文被网络安全配置拦截时，异常消息里带 "Cleartext HTTP traffic"
+            String m = e.getMessage() == null ? "" : e.getMessage();
+            if (m.contains("Cleartext")) {
+                lastError = "系统拦截了明文 HTTP（network_security_config 未放行该地址）";
+            } else {
+                lastError = "网络请求失败：" + m;
+            }
+            Log.w(TAG, "ping 失败: " + m);
+            return false;
         } catch (Exception e) {
-            Log.w(TAG, "ping 失败: " + e.getMessage());
+            lastError = "连接失败：" + e.getClass().getSimpleName();
+            Log.w(TAG, "ping 异常: " + e.getMessage());
             return false;
         } finally {
             if (c != null) c.disconnect();

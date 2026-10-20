@@ -20,13 +20,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dsh.harness.DshSync
@@ -117,7 +120,7 @@ fun S51NasSync(
     DshScreen(modifier) {
         DshNavBar(
             onBack = onBack, title = "NAS 连接", stacked = true,
-            subtitle = if (configured) "飞牛 NAS · $protoName" else "飞牛 NAS",
+            subtitle = if (configured) "设置 › NAS 已连接" else "设置 › NAS 未连接",
             actions = {
                 DshIBtn(DshIcons.HelpOutline, "说明", onClick = {
                     status = "NAS 同步仅同步会话/工作区数据（.dsh/storages），不同步 node_modules 等平台文件；凭据加密保存、只写不回读。"
@@ -168,7 +171,8 @@ fun S51NasSync(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("支持协议", style = Type.meta, color = c.ink3)
-                        DshChip("WebDAV", tone = ChipTone.Neutral, mini = true)
+                        // 图二：WebDAV 高亮为默认协议
+                        DshChip("WebDAV", tone = ChipTone.Brand, mini = true)
                         DshChip("SMB", tone = ChipTone.Neutral, mini = true)
                         DshChip("SFTP", tone = ChipTone.Neutral, mini = true)
                     }
@@ -176,24 +180,36 @@ fun S51NasSync(
 
                 Spacer(Modifier.height(22.dp))
 
-                // —— 前置条件 ——
+                // —— 前置条件（图二：三行均带副标题）——
                 DshSecTitle("前置条件")
                 DshCard {
-                    DshMRow("同一内网", icon = DshIcons.Wifi, iconTone = ChipTone.Neutral)
+                    DshMRow(
+                        "与 NAS 处于同一内网",
+                        subtitle = "跨网需先打通路由或走 VPN",
+                        icon = DshIcons.Wifi, iconTone = ChipTone.Neutral,
+                    )
                     DshDivider()
-                    DshMRow("共享目录可读写", icon = DshIcons.FolderShared, iconTone = ChipTone.Neutral)
+                    DshMRow(
+                        "共享目录可读写",
+                        subtitle = "仅上传映射只能作备份目标",
+                        icon = DshIcons.FolderShared, iconTone = ChipTone.Neutral,
+                    )
                     DshDivider()
-                    DshMRow("凭据只写不回读", icon = DshIcons.Lock, iconTone = ChipTone.Neutral)
+                    DshMRow(
+                        "凭据只写不回读",
+                        subtitle = "与模型密钥同一套存储规则",
+                        icon = DshIcons.Lock, iconTone = ChipTone.Neutral,
+                    )
                 }
 
                 Spacer(Modifier.height(14.dp))
 
-                // —— 连不上？查这两项 ——
-                DshSecTitle("连不上？查这两项")
+                // —— 连不上查这两项（图二：编号 + 具体排查文案）——
+                DshSecTitle("连不上查这两项")
                 DshCard {
-                    DshMRow("确认飞牛 NAS 已开启对应服务", icon = DshIcons.Power, iconTone = ChipTone.Warn)
+                    TroubleshootItem("1", "端口不通", "测试连接超时或 401，先确认端口与 HTTPS")
                     DshDivider()
-                    DshMRow("确认手机与 NAS 同一 Wi-Fi", icon = DshIcons.Wifi, iconTone = ChipTone.Warn)
+                    TroubleshootItem("2", "目录不可写", "映射方向改「仅上传」或换共享目录")
                 }
             } else {
                 // —— 设备卡（S16 顶部）——
@@ -543,20 +559,17 @@ fun S52NasAdd(
                         busy = true; status = "连接测试中…"
                         scope.launch(Dispatchers.IO) {
                             val t = typeOf(proto)
-                            val ok = DshSync.testConnection(
+                            // v30.6：testConnectionEx 返回具体失败原因，不再吞成一句"失败"
+                            val result = DshSync.testConnectionEx(
                                 ctx, t, addr, port, shareDir, user, if (pass.isBlank()) null else pass)
-                            if (ok) {
+                            if (result == "ok") {
                                 DshSync.configure(
                                     ctx, t, addr, port, shareDir, user, if (pass.isBlank()) null else pass, 60)
                                 status = "连接成功，已保存 NAS 连接（$t）"
                                 statusOk = true
                                 onSaved()
                             } else {
-                                status = when (proto) {
-                                    1 -> "连接失败：检查地址 / 共享目录 / 账号密码 / 是否开启 SMB"
-                                    2 -> "连接失败：检查地址 / 账号密码 / 是否开启 SFTP(SSH)"
-                                    else -> "连接失败：检查地址 / 账号密码 / 是否开启 WebDAV"
-                                }
+                                status = "连接失败：$result"
                                 statusOk = false
                                 busy = false
                             }
@@ -610,6 +623,28 @@ private fun BoundaryItem(n: String, text: String) {
         Text(n, style = Type.sec, color = c.brand, modifier = Modifier.width(16.dp))
         Spacer(Modifier.width(2.dp))
         Text(text, style = Type.sec, color = c.ink2, modifier = Modifier.weight(1f))
+    }
+}
+
+/** 排障编号项（图二：编号 + 标题：说明）。 */
+@Composable
+private fun TroubleshootItem(n: String, title: String, desc: String) {
+    val c = DshTheme.colors
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 7.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(n, style = Type.rowTitle, color = c.brand, modifier = Modifier.width(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                buildAnnotatedString {
+                    append(title + "：")
+                    withStyle(SpanStyle(color = c.ink3)) { append(desc) }
+                },
+                style = Type.sec, color = c.ink,
+            )
+        }
     }
 }
 

@@ -55,6 +55,8 @@ public final class DshSync {
     public interface NasTransport {
         /** 连通性 + 鉴权探测。能连且凭证正确返回 true。永不抛异常。 */
         boolean ping();
+        /** 最近一次失败的人类可读原因（ping/put 等失败后读取；成功后为空串）。 */
+        String lastError();
         /** 递归创建远端目录（已存在视为成功）。 */
         boolean mkdirs(String relPath);
         /** 上传本地文件到远端 relPath。 */
@@ -239,23 +241,35 @@ public final class DshSync {
         return displayUrl(type(ctx), host(ctx), port(ctx), share(ctx));
     }
 
-    /** 连通性测试（设置页「测试连接」）。不落盘；pass 为 null 时用已存密码。 */
-    public static boolean testConnection(Context ctx, String type, String host, String port,
-                                         String share, String user, String pass) {
-        if (host == null || host.trim().isEmpty()) return false;
-        if (user == null || user.trim().isEmpty()) return false;
+    /**
+     * 连通性测试（设置页「测试连接」）。不落盘；pass 为 null 时用已存密码。
+     *
+     * @return "ok" 或人类可读的失败原因（v30.6：直接透出到「连接并测试」的结果条）。
+     */
+    public static String testConnectionEx(Context ctx, String type, String host, String port,
+                                          String share, String user, String pass) {
+        if (host == null || host.trim().isEmpty()) return "地址不能为空";
+        if (user == null || user.trim().isEmpty()) return "账号不能为空";
         NasTransport t = createTransport(
             type, host.trim(), port == null ? "" : port.trim(),
             share == null ? "" : share.trim(), user.trim(),
             pass == null ? prefs(ctx).getString("pass", "") : pass);
         try {
-            return t.ping();
+            return t.ping() ? "ok"
+                : (t.lastError() == null || t.lastError().isEmpty()
+                    ? "连接失败（无详细信息）" : t.lastError());
         } catch (Throwable e) {
             Log.w(TAG, "testConnection 异常", e);
-            return false;
+            return "连接异常：" + e.getClass().getSimpleName();
         } finally {
             try { t.close(); } catch (Throwable ignored) { }
         }
+    }
+
+    /** 连通性测试（布尔版，S51 状态卡用）。 */
+    public static boolean testConnection(Context ctx, String type, String host, String port,
+                                         String share, String user, String pass) {
+        return "ok".equals(testConnectionEx(ctx, type, host, port, share, user, pass));
     }
 
     /** 旧签名（S51 沿用）：从 url 解析协议后走新逻辑。 */
@@ -304,10 +318,18 @@ public final class DshSync {
                                        String share, String user, String pass) {
         if ("smb".equals(type)) return new DshSmbClient(host, port, share, user, pass);
         if ("sftp".equals(type)) return new DshSftpClient(host, port, share, user, pass);
-        // 默认 WebDAV：host/port 拼成 http://host:port
-        String u = "http://" + (host == null ? "" : host)
-            + (port == null || port.isEmpty() ? "" : ":" + port);
-        return new DshWebDavClient(u, user, pass);
+        // 默认 WebDAV。host 容忍用户直接粘贴完整 http(s):// 地址（v30.6）：
+        // 带协议就用原样（无显式端口才补 :port），纯 IP/主机名才补 http:// 前缀。
+        String h = host == null ? "" : host.trim();
+        StringBuilder u = new StringBuilder();
+        if (h.startsWith("http://") || h.startsWith("https://")) {
+            u.append(h);
+            if (port != null && !port.isEmpty() && !h.matches(".*:\\d+$")) u.append(':').append(port);
+        } else {
+            u.append("http://").append(h);
+            if (port != null && !port.isEmpty()) u.append(':').append(port);
+        }
+        return new DshWebDavClient(u.toString(), user, pass);
     }
 
     // ================= 同步主流程 =================
@@ -355,7 +377,9 @@ public final class DshSync {
         NasTransport tx = createTransport(ctx);
         try {
             if (!tx.ping()) {
-                r.message = "无法连接 NAS（检查地址/凭证/是否开启对应服务）";
+                String why = tx.lastError();
+                r.message = "无法连接 NAS" + (why == null || why.isEmpty()
+                        ? "（检查地址/凭证/是否开启对应服务）" : ("：" + why));
                 return r;
             }
             if (!tx.mkdirs(REMOTE_ROOT)) {

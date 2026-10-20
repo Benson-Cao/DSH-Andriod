@@ -42,6 +42,12 @@ final class DshSftpClient implements DshSync.NasTransport {
     private Session session;
     private ChannelSftp sftp;
 
+    /** 最近一次失败的人类可读原因（v30.6：透出到「连接并测试」）。 */
+    private String lastError = "";
+
+    @Override
+    public String lastError() { return lastError; }
+
     DshSftpClient(String host, String port, String share, String user, String pass) {
         this.host = host == null ? "" : host.trim();
         int p;
@@ -91,6 +97,7 @@ final class DshSftpClient implements DshSync.NasTransport {
 
     @Override
     public boolean ping() {
+        lastError = "";
         try {
             ensureConnected();
             // 验证可达 + 鉴权：探测基础目录，不存在则列其父目录
@@ -100,7 +107,22 @@ final class DshSftpClient implements DshSync.NasTransport {
                 sftp.ls(base.isEmpty() ? "." : dirOf(base));
             }
             return true;
+        } catch (JSchException e) {
+            String m = e.getMessage() == null ? "" : e.getMessage();
+            if (m.contains("Auth fail") || m.contains("auth")) {
+                lastError = "SSH 可达，但账号或密码不对（" + m + "）";
+            } else if (m.contains("timeout") || m.contains("Timeout")) {
+                lastError = "连接超时——确认手机与 NAS 在同一网络，且已开启 SSH/SFTP";
+            } else if (m.contains("refused") || m.contains("UnknownHost") || m.contains("unreachable")) {
+                lastError = "无法建立 SSH 连接——确认 IP/端口(22)正确、NAS 已开启 SSH";
+            } else {
+                lastError = "SSH 连接失败：" + m;
+            }
+            Log.w(TAG, "ping 失败: " + m);
+            disconnect();
+            return false;
         } catch (Throwable t) {
+            lastError = "连接失败：" + t.getClass().getSimpleName();
             Log.w(TAG, "ping 失败: " + t.getMessage());
             disconnect();
             return false;

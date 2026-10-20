@@ -768,7 +768,12 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 SheetKind.Workspace -> S3WorkspaceSheet(
                     visible = true,
                     onDismiss = { sheet = SheetKind.None },
-                    onAddLocal = { sheet = SheetKind.None },
+                    // v30.6：真动作 —— 拉起系统目录选择器（OpenDocumentTree），
+                    // 选取成功后固化授权、写 SafConfig、起本地代理（与 S50 外部存储同一真链路）
+                    onAddLocal = {
+                        sheet = SheetKind.None
+                        safLauncher.launch(null)
+                    },
                     currentWorkspace = workspace,
                     nasConfigured = com.dsh.harness.DshSync.isConfigured(ctx),
                     onNas = { nav.go(Route.S51NasSync) },
@@ -884,7 +889,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     },
                     onPickFile = { path ->
                         mentionOpen = false
-                        // 选中本机文件 → 复制到本地后把「@<本地路径> 」追加到输入框
+                        // v30.6：文件已复制进 dsh 工作区（home/attachments/），回填可被引擎
+                        // 真实读取的相对路径 —— 不再是引擎读不到的外部绝对路径
                         homeInput = homeInput.trimEnd() + "@" + path + " "
                     },
                 )

@@ -711,14 +711,21 @@ fun BoxScope.S3MentionSheet(
             scope.launch(Dispatchers.IO) {
                 try {
                     val name = queryDisplayName(ctx, uri) ?: ("file_" + System.currentTimeMillis())
-                    val dir = File(ctx.getExternalFilesDir(null), "dsh-attachments")
+                    // v30.6：复制进 dsh 工作区（HOME=/filesDir/home）下的 attachments/，
+                    // 引擎（cwd=home）能真实读到；不再放 getExternalFilesDir（dsh 读不到、路径也只是文本）。
+                    val dir = java.io.File(
+                        com.dsh.harness.DshBootstrap.home(ctx.applicationContext),
+                        "attachments",
+                    )
                     dir.mkdirs()
-                    val dest = File(dir, System.currentTimeMillis().toString() + "_" + name)
+                    val fname = System.currentTimeMillis().toString() + "_" + name
+                    val dest = java.io.File(dir, fname)
                     ctx.contentResolver.openInputStream(uri)?.use { ins ->
                         FileOutputStream(dest).use { outs -> ins.copyTo(outs) }
                     }
                     pickedName = name
-                    onPickFile(dest.absolutePath)
+                    // 回填相对路径：cwd=home 时引擎可直接读取
+                    onPickFile("attachments/" + fname)
                 } catch (e: Throwable) {
                     pickedName = null
                 }
@@ -784,7 +791,7 @@ fun BoxScope.S3MentionSheet(
                     Icon(DshIcons.InsertDriveFile, null, Modifier.size(17.dp), tint = c.brand)
                     Column(Modifier.weight(1f)) {
                         Text("从本机选择文件", style = Type.rowTitle, color = c.ink)
-                        Text("选中的文件会复制到本地，并以 @ 引用随消息提交", style = Type.sec, color = c.ink3)
+                        Text("文件会复制到工作区 attachments/ 目录，引擎直接读取真实文件", style = Type.sec, color = c.ink3)
                     }
                     DshBtn(
                         "选择", icon = DshIcons.FolderOpen, small = true, tone = BtnTone.Ghost,
