@@ -192,7 +192,30 @@ public final class DshSync {
             .putInt("interval", intervalSec < 30 ? 30 : intervalSec);
         if (pass != null) e.putString("pass", pass);
         e.apply();
+        // 换连接 = 换目标，旧连通性结论作废（否则会一直挂在只读降级态）
+        resetPing(ctx);
         Log.i(TAG, "同步配置已更新：type=" + type + " host=" + host + " interval=" + intervalSec + "s");
+    }
+
+    /**
+     * v30.7：连同 S17 的同步选项一起保存。
+     *
+     * @param direction     {@link #DIR_BOTH} / {@link #DIR_UPLOAD} / {@link #DIR_MANUAL}
+     * @param scopeMask     {@link #SCOPE_*} 位掩码
+     * @param conflict      {@link #CF_KEEP} / {@link #CF_NEWEST}
+     * @param offlineRO     离线时转只读
+     * @param mountAsWs     挂载为工作区来源
+     */
+    public static void configure(Context ctx, String type, String host, String port,
+                                 String share, String user, String pass, int intervalSec,
+                                 String direction, int scopeMask, String conflict,
+                                 boolean offlineRO, boolean mountAsWs) {
+        configure(ctx, type, host, port, share, user, pass, intervalSec);
+        setDirection(ctx, direction);
+        setScopeMask(ctx, scopeMask);
+        setConflictPolicy(ctx, conflict);
+        setOfflineReadOnly(ctx, offlineRO);
+        setMountAsWorkspace(ctx, mountAsWs);
     }
 
     /** 旧签名（WebDAV 兼容，SAF 桥仍在用）：从 url 解析成 host/port 后走新逻辑。 */
@@ -202,6 +225,122 @@ public final class DshSync {
         parseUrl(url, h, po, sh);
         String type = url.startsWith("smb://") ? "smb" : (url.startsWith("sftp://") ? "sftp" : "webdav");
         configure(ctx, type, h.toString(), po.toString(), sh.toString(), user, pass, intervalSec);
+    }
+
+    // ================= 同步选项（设计稿 v22 S17，全部真实生效） =================
+
+    /** 同步方向取值。 */
+    public static final String DIR_BOTH = "both";      // 双向（默认）
+    public static final String DIR_UPLOAD = "upload";  // 仅上传：跳过下载，绝不覆盖本地
+    public static final String DIR_MANUAL = "manual";  // 仅手动：定时任务不自动跑
+
+    /** 同步范围位掩码。 */
+    public static final int SCOPE_SESSION = 1;    // 会话（session*）
+    public static final int SCOPE_WORKSPACE = 2;  // 工作区文件（workspace*）
+    public static final int SCOPE_ARTIFACT = 4;   // 产物与轨迹（其余 json）
+    public static final int SCOPE_ALL = SCOPE_SESSION | SCOPE_WORKSPACE | SCOPE_ARTIFACT;
+
+    /** 冲突处理取值。 */
+    public static final String CF_KEEP = "keep";        // 保留两份（默认，最安全）
+    public static final String CF_NEWEST = "newest";    // 以最新为准（直接覆盖，不留副本）
+
+    public static String direction(Context ctx) {
+        String d = prefs(ctx).getString("direction", DIR_BOTH);
+        return d == null || d.isEmpty() ? DIR_BOTH : d;
+    }
+
+    public static void setDirection(Context ctx, String d) {
+        prefs(ctx).edit().putString("direction", d == null ? DIR_BOTH : d).apply();
+        Log.i(TAG, "同步方向=" + d);
+    }
+
+    public static int scopeMask(Context ctx) {
+        // 默认全选；显式存 0 视为「一项都没选」，用 containsKey 区分
+        if (!prefs(ctx).contains("scope")) return SCOPE_ALL;
+        return prefs(ctx).getInt("scope", SCOPE_ALL);
+    }
+
+    public static void setScopeMask(Context ctx, int mask) {
+        prefs(ctx).edit().putInt("scope", mask).apply();
+        Log.i(TAG, "同步范围 mask=" + mask);
+    }
+
+    public static String conflictPolicy(Context ctx) {
+        String p = prefs(ctx).getString("conflict", CF_KEEP);
+        return p == null || p.isEmpty() ? CF_KEEP : p;
+    }
+
+    public static void setConflictPolicy(Context ctx, String p) {
+        prefs(ctx).edit().putString("conflict", p == null ? CF_KEEP : p).apply();
+        Log.i(TAG, "冲突处理=" + p);
+    }
+
+    public static boolean offlineReadOnly(Context ctx) {
+        return prefs(ctx).getBoolean("offlineReadOnly", true);
+    }
+
+    public static void setOfflineReadOnly(Context ctx, boolean on) {
+        prefs(ctx).edit().putBoolean("offlineReadOnly", on).apply();
+        Log.i(TAG, "离线转只读=" + on);
+    }
+
+    public static boolean mountAsWorkspace(Context ctx) {
+        return prefs(ctx).getBoolean("mountAsWorkspace", false);
+    }
+
+    public static void setMountAsWorkspace(Context ctx, boolean on) {
+        prefs(ctx).edit().putBoolean("mountAsWorkspace", on).apply();
+        Log.i(TAG, "挂载为工作区来源=" + on);
+    }
+
+    // ---- 连通性状态：S18「NAS 离线转只读」的数据源 ----
+
+    /** 记录一次探测结果（syncOnce 与手动测试都会调）。 */
+    private static void markPing(Context ctx, boolean ok) {
+        prefs(ctx).edit()
+            .putBoolean("lastPingOk", ok)
+            .putLong("lastPingAt", System.currentTimeMillis())
+            .apply();
+    }
+
+    /** 最近一次探测是否成功。未探测过按「成功」处理（不误报降级）。 */
+    public static boolean lastPingOk(Context ctx) {
+        return prefs(ctx).getBoolean("lastPingOk", true);
+    }
+
+    public static long lastPingAt(Context ctx) {
+        return prefs(ctx).getLong("lastPingAt", 0L);
+    }
+
+    /**
+     * 当前是否处于「NAS 断连 → 只读」降级态（设计稿 v22 S18）。
+     *
+     * 条件：已配置 + 开了「离线时转只读」+ 最近一次探测失败。
+     * 这是**挂载状态**触发的，不是 Agent 自己判断的——所以只读探针放在这里，
+     * UI（首页横幅 / NAS 页）只读这个结论即可。
+     */
+    public static boolean readOnlyNow(Context ctx) {
+        if (!isConfigured(ctx)) return false;
+        if (!offlineReadOnly(ctx)) return false;
+        return !lastPingOk(ctx);
+    }
+
+    /** 清掉连通性缓存（改配置后必须调，否则旧的失败状态会一直挂着只读）。 */
+    public static void resetPing(Context ctx) {
+        prefs(ctx).edit().remove("lastPingOk").remove("lastPingAt").apply();
+    }
+
+    /**
+     * 主动探测一次 NAS 可达性并记录（供 UI 手动「重连」用）。
+     *
+     * @return true 表示此刻真的连得上
+     */
+    public static boolean probeHealth(Context ctx) {
+        if (!isConfigured(ctx)) return false;
+        boolean ok = testConnection(ctx, type(ctx), host(ctx), port(ctx), share(ctx),
+                user(ctx), null);
+        markPing(ctx, ok);
+        return ok;
     }
 
     public static int intervalSec(Context ctx) {
@@ -285,6 +424,9 @@ public final class DshSync {
         prefs(ctx).edit()
             .remove("url").remove("user").remove("pass").remove("interval")
             .remove("type").remove("host").remove("port").remove("share")
+            .remove("direction").remove("scope").remove("conflict")
+            .remove("offlineReadOnly").remove("mountAsWorkspace")
+            .remove("lastPingOk").remove("lastPingAt")
             .apply();
         Log.i(TAG, "同步配置已清除");
     }
@@ -362,6 +504,12 @@ public final class DshSync {
         }
         r.ran = true;
 
+        // v30.7：S17 的三个选项在这里真实生效，不是摆设
+        final String dir = direction(ctx);
+        final boolean uploadOnly = DIR_UPLOAD.equals(dir);
+        final boolean newestWins = CF_NEWEST.equals(conflictPolicy(ctx));
+        final int scope = scopeMask(ctx);
+
         File localDir = new File(DshBootstrap.home(ctx), LOCAL_REL);
         //⚠️ 本地目录不存在 = 用户还没产生过任何会话，不做任何事（也不该为此在 NAS 上建目录）
         if (!localDir.isDirectory()) {
@@ -378,10 +526,12 @@ public final class DshSync {
         try {
             if (!tx.ping()) {
                 String why = tx.lastError();
+                markPing(ctx, false);
                 r.message = "无法连接 NAS" + (why == null || why.isEmpty()
                         ? "（检查地址/凭证/是否开启对应服务）" : ("：" + why));
                 return r;
             }
+            markPing(ctx, true);
             if (!tx.mkdirs(REMOTE_ROOT)) {
                 r.message = "无法创建远端目录（检查共享目录权限）";
                 return r;
@@ -395,6 +545,7 @@ public final class DshSync {
             for (File f : localFiles) {
                 if (!f.isFile()) continue;
                 if (f.getName().contains(CONFLICT_MARK)) continue;   // 冲突副本不参与同步
+                if (!inScope(f.getName(), scope)) continue;           // v30.7：同步范围过滤
                 String remotePath = REMOTE_ROOT + "/" + f.getName();
                 boolean remoteExists = remoteNames.contains(f.getName());
                 boolean changed = f.lastModified() > lastSync;
@@ -408,40 +559,44 @@ public final class DshSync {
                 }
             }
 
-            // ---- 2) 下载：远端更新（mtime 比上次同步新）或本地缺失 ----
-            for (String name : remoteNames) {
-                if (name.contains(CONFLICT_MARK)) continue;
-                File local = new File(localDir, name);
-                String remotePath = REMOTE_ROOT + "/" + name;
-                long remoteStamp = tx.lastModified(remotePath);   // 0 =取不到
-                boolean localExists = local.isFile();
+            // ---- 2) 下载：仅上传模式下整段跳过（本地绝不被动）----
+            if (!uploadOnly) {
+                for (String name : remoteNames) {
+                    if (name.contains(CONFLICT_MARK)) continue;
+                    if (!inScope(name, scope)) continue;
+                    File local = new File(localDir, name);
+                    String remotePath = REMOTE_ROOT + "/" + name;
+                    long remoteStamp = tx.lastModified(remotePath);   // 0 =取不到
+                    boolean localExists = local.isFile();
 
-                if (!localExists) {
-                    if (tx.get(remotePath, local)) {
-                        r.downloaded++;
-                        Log.i(TAG, "从 NAS 拉取: " + name);
+                    if (!localExists) {
+                        if (tx.get(remotePath, local)) {
+                            r.downloaded++;
+                            Log.i(TAG, "从 NAS 拉取: " + name);
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                if (remoteStamp <= 0) continue;                  // 取不到 mtime 不冒险覆盖
-                boolean remoteNewer = remoteStamp > lastSync;
-                boolean localChanged = local.lastModified() > lastSync;
-                if (!remoteNewer) continue;
+                    if (remoteStamp <= 0) continue;                  // 取不到 mtime 不冒险覆盖
+                    boolean remoteNewer = remoteStamp > lastSync;
+                    boolean localChanged = local.lastModified() > lastSync;
+                    if (!remoteNewer) continue;
 
-                if (localChanged) {
-                    // ⚠️ 两边都改过 → 保留双份，绝不静默覆盖
-                    File kept = keepConflictCopy(local);
-                    if (kept != null) r.conflicts++;
-                    Log.w(TAG, "检测到冲突（本地与 NAS 都改过），已保留双份: " + name);
-                    if (tx.get(remotePath, local)) r.downloaded++;
-                } else {
-                    if (tx.get(remotePath, local)) r.downloaded++;
+                    if (localChanged && !newestWins) {
+                        // ⚠️ 两边都改过 + 保留两份 → 绝不静默覆盖
+                        File kept = keepConflictCopy(local);
+                        if (kept != null) r.conflicts++;
+                        Log.w(TAG, "检测到冲突（本地与 NAS 都改过），已保留双份: " + name);
+                        if (tx.get(remotePath, local)) r.downloaded++;
+                    } else {
+                        // 以最新为准（含 localChanged 情况）：直接采信远端
+                        if (tx.get(remotePath, local)) r.downloaded++;
+                    }
                 }
             }
 
             p.edit().putLong(stampKey, System.currentTimeMillis()).apply();
             Log.i(TAG, "同步完成: ↑" + r.uploaded + " ↓" + r.downloaded
-                    + " 冲突" + r.conflicts);
+                    + " 冲突" + r.conflicts + " 方向=" + dir);
             if ("".equals(r.message)) r.message = "ok";
         } catch (Throwable t) {
             r.message = "同步异常: " + t.getClass().getSimpleName();
@@ -450,6 +605,27 @@ public final class DshSync {
             try { tx.close(); } catch (Throwable ignored) { }
         }
         return r;
+    }
+
+    /**
+     * 文件名是否落在当前同步范围内（v30.7）。
+     *
+     * <p>映射规则（对应 S17「会话 · 工作区文件 · 产物与轨迹」三项）：
+     * <ul>
+     *   <li>{@code session*} → 会话</li>
+     *   <li>{@code workspace*} → 工作区文件</li>
+     *   <li>其余 {@code .json}（产物/轨迹索引）→ 产物与轨迹</li>
+     * </ul>
+     * 非 json（如 lock 临时文件）任何范围都不含，避免把运行时垃圾同步上去。
+     */
+    static boolean inScope(String name, int mask) {
+        if (name == null || name.isEmpty()) return false;
+        String n = name.toLowerCase(Locale.US);
+        if (n.endsWith(".tmp") || n.endsWith(".lock") || n.endsWith("~")) return false;
+        if (n.startsWith("session")) return (mask & SCOPE_SESSION) != 0;
+        if (n.startsWith("workspace")) return (mask & SCOPE_WORKSPACE) != 0;
+        if (n.endsWith(".json")) return (mask & SCOPE_ARTIFACT) != 0;
+        return false;
     }
 
     /**

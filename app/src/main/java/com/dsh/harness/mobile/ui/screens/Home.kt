@@ -96,6 +96,20 @@ fun S3Home(
     onShowDiagnostics: () -> Unit = {},
     /** v20：右上角描边菜单按钮 → 「本机服务与快捷入口」Sheet */
     onOpenServices: () -> Unit = {},
+    /**
+     * v30.7（设计稿 v22 **S18**）：NAS 断连 → 已转只读。
+     *
+     * 由 [com.dsh.harness.DshSync.readOnlyNow] 判定——那是**挂载状态**触发的
+     * （ping 失败 + 开了「离线转只读」），不是 Agent 自己判断的。降级时：
+     * 顶栏下方出横幅、输入卡禁用、写入类动作禁用，但读取与切回本地工作区仍可用。
+     */
+    nasReadOnly: Boolean = false,
+    /** 降级横幅上的「最后同步」时间（真实时间戳，无数据则 null）。 */
+    nasLastSync: String? = null,
+    /** 点横幅「重连」 */
+    onNasReconnect: () -> Unit = {},
+    /** 点「切回本地工作区」 */
+    onSwitchLocalWorkspace: () -> Unit = {},
 ) {
     val c = DshTheme.colors
 
@@ -135,6 +149,37 @@ fun S3Home(
                 .padding(horizontal = Space.lg),
         ) {
             Spacer(Modifier.height(56.dp))
+
+            // —— v30.7 / 设计稿 S18：NAS 断连只读横幅 ——
+            if (nasReadOnly) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.lg))
+                        .background(c.warn.copy(alpha = 0.12f))
+                        .border(1.dp, c.warn.copy(alpha = 0.3f), RoundedCornerShape(Radius.lg))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(DshIcons.ErrorOutline, null, Modifier.size(17.dp), tint = c.warn)
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "NAS 连接中断 · 已转只读",
+                            style = Type.secTitle, color = c.warn,
+                        )
+                        Text(
+                            "写入与命令执行已禁用 · " + (nasLastSync ?: "尚未同步"),
+                            style = Type.meta, color = c.ink2,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    DshBtn("重连", small = true, modifier = Modifier.widthIn(min = 64.dp),
+                        onClick = onNasReconnect)
+                }
+                Spacer(Modifier.height(10.dp))
+            }
 
             // —— Hero：23px 标题 + 预览版 chip ——
             Column(
@@ -185,10 +230,35 @@ fun S3Home(
                     .shadow(6.dp, RoundedCornerShape(Radius.xl), clip = false)
                     .background(c.card, RoundedCornerShape(Radius.xl))
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .alpha(if (workspaceChosen) 1f else 0.72f)
+                    .alpha(if (workspaceChosen && !nasReadOnly) 1f else 0.72f)
                     .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 11.dp),
             ) {
-                if (workspaceChosen) {
+                // v30.7：只读降级优先于「未选工作区」——两者都置灰，但原因文案不同
+                if (nasReadOnly) {
+                    Text(
+                        "只读工作区 · 无法写文件与执行命令",
+                        style = Type.input,
+                        color = c.ink3,
+                        modifier = Modifier.heightIn(min = 60.dp),
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Icon(
+                            DshIcons.Lock, null,
+                            Modifier.size(15.dp).padding(top = 2.dp),
+                            tint = c.warn,
+                        )
+                        Text(
+                            "当前工作区来自 NAS 挂载目录，连接中断已自动转只读；恢复后可继续，或切回本地工作区",
+                            style = Type.sec.copy(fontWeight = FontWeight.Medium, lineHeight = 18.sp),
+                            color = c.ink3,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                } else if (workspaceChosen) {
                     BasicTextInputCompat(
                         value = input,
                         onValueChange = { v ->
@@ -239,7 +309,7 @@ fun S3Home(
                 ) {
                     DshIBtn(
                         DshIcons.AddCircleOutline, "添加附件",
-                        enabled = workspaceChosen,
+                        enabled = workspaceChosen && !nasReadOnly,
                         // v24：接线到「提及」选择器（与输入 @ 同一个 Sheet）。
                         // 此前 onClick = {} 空实现，用户实测"点击＋号无反应"。
                         onClick = onAddAttachment,
@@ -247,7 +317,7 @@ fun S3Home(
                     DshTextDropdown(
                         text = "工作区内修改",
                         onClick = onPickMode,
-                        enabled = workspaceChosen,
+                        enabled = workspaceChosen && !nasReadOnly,
                     )
                     // 模型名 + 思考强度同行（点开进 S29）
                     // v24：本区域参与 weight —— 此前模型名 Text 不换行不省略，
@@ -276,10 +346,10 @@ fun S3Home(
                             tint = if (workspaceChosen) c.ink3 else c.ink3.copy(alpha = 0.45f),
                         )
                     }
-                    val canSend = workspaceChosen && input.isNotBlank() && connectionReady
+                    val canSend = workspaceChosen && !nasReadOnly && input.isNotBlank() && connectionReady
                     // v23：不禁用点击。原来 enabled=false 时整个按钮无响应，
                     // 用户实测"发送按钮点不到"且得不到任何原因。保持灰底视觉，
-                    // 但点击时给出具体原因（空输入 / 引擎未就绪 / 未选工作区）。
+                    // 但点击时给出具体原因（空输入 / 引擎未就绪 / 未选工作区 / 只读）。
                     DshIBtn(
                         icon = DshIcons.ArrowForward,
                         contentDescription = "发送",
@@ -291,6 +361,7 @@ fun S3Home(
                             } else {
                                 onSendBlocked(
                                     when {
+                                        nasReadOnly -> "NAS 已断开，工作区处于只读，先重连或切回本地工作区"
                                         !workspaceChosen -> "先选择一个工作区"
                                         input.isBlank() -> "先输入内容"
                                         else -> "引擎启动中，稍候再发"
@@ -300,6 +371,17 @@ fun S3Home(
                         },
                     )
                 }
+            }
+
+            // v30.7：只读降级时给「切回本地工作区」出口（设计稿 S18 底部幽灵按钮）
+            if (nasReadOnly) {
+                Spacer(Modifier.height(14.dp))
+                DshBtn(
+                    text = "切回本地工作区继续",
+                    icon = DshIcons.HomeWork,
+                    tone = BtnTone.Ghost,
+                    onClick = onSwitchLocalWorkspace,
+                )
             }
 
             // S28：未选时输入框下方补一个主按钮，直达选择工作区 Sheet
@@ -429,6 +511,14 @@ fun BoxScope.S3WorkspaceSheet(
     currentWorkspace: String? = null,
     nasConfigured: Boolean = false,
     onNas: () -> Unit = {},
+    /** v30.7：NAS 是否已挂为工作区来源（对应 S17 的「挂载为工作区来源」开关） */
+    nasMounted: Boolean = false,
+    /** v30.7：NAS 断连 → 只读（设计稿 S18 的降级态） */
+    nasReadOnly: Boolean = false,
+    /** NAS 设备/协议说明（副标题，如「群晖 DS920+ · WebDAV」） */
+    nasLabel: String = "NAS",
+    /** 远端同步目录（显示用，如「vault/dsh-sync」） */
+    nasRemotePath: String = "dsh-phone/storages",
 ) {
     val c = DshTheme.colors
     DshSheet(
@@ -471,10 +561,10 @@ fun BoxScope.S3WorkspaceSheet(
                 }
             }
 
-            // —— NAS 备份目标（真实状态；仅作备份目标，不作工作区来源）——
+            // —— NAS 来源（v30.7 按 v22 S3/S18：可写挂载可作工作区来源，只读仅可读）——
             if (nasConfigured) {
-                Spacer(Modifier.height(14.dp))
-                DshSecTitle("NAS 备份目标")
+                Spacer(Modifier.height(16.dp))
+                DshSecTitle("NAS 来源", note = nasLabel)
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -482,13 +572,42 @@ fun BoxScope.S3WorkspaceSheet(
                         .background(c.card)
                         .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
                 ) {
+                    val canWrite = nasMounted && !nasReadOnly
                     DshMRow(
-                        title = "NAS 已连接",
-                        subtitle = "仅作会话/工作区数据备份目标",
-                        icon = DshIcons.Cloud,
-                        iconTone = ChipTone.Ok,
-                        trailing = { DshChip("已连接", tone = ChipTone.Ok, mini = true) },
+                        title = nasRemotePath,
+                        subtitle = if (!nasMounted) "未挂载 · 在 NAS 连接页开「挂载为工作区来源」"
+                        else if (nasReadOnly) "已挂载 · 连接中断，仅可读"
+                        else "已挂载 · 可作工作区来源",
+                        icon = if (nasReadOnly) DshIcons.CloudOff else DshIcons.Cloud,
+                        iconTone = if (canWrite) ChipTone.Brand else ChipTone.Neutral,
+                        trailing = {
+                            DshChip(
+                                when {
+                                    nasReadOnly -> "只读"
+                                    nasMounted -> "可写"
+                                    else -> "未挂载"
+                                },
+                                tone = if (canWrite) ChipTone.Ok else ChipTone.Warn, mini = true,
+                            )
+                        },
                         onClick = onNas,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        DshIcons.ErrorOutline, null,
+                        Modifier.size(13.dp).padding(top = 1.dp), tint = c.warn,
+                    )
+                    Text(
+                        "NAS 目录作工作区后边界不变：仍只在该挂载目录内读写；挂载掉线自动转只读，写入类操作禁用",
+                        style = Type.meta.copy(lineHeight = 16.sp),
+                        color = c.ink3,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }

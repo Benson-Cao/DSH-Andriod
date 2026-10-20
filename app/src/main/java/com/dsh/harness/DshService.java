@@ -161,6 +161,12 @@ public final class DshService extends Service {
                         }
                         try {
                             if (!DshSync.isConfigured(DshService.this)) continue;
+                            // v30.7：S17 选了「仅手动」就只保留定时探测（更新连通性状态供
+                            // S18 只读降级判断），**不搬数据**。真同步由页面「立即同步」触发。
+                            if (DshSync.DIR_MANUAL.equals(DshSync.direction(DshService.this))) {
+                                DshSync.probeHealth(DshService.this);
+                                continue;
+                            }
                             DshSync.Result r = DshSync.syncOnce(DshService.this);
                             // 只在真出问题时打日志；成功不刷屏
                             if (r.ran && !"ok".equals(r.message)) {

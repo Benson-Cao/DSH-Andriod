@@ -37,8 +37,13 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import com.dsh.harness.DshBootstrap
+import com.dsh.harness.DshSync
 import com.dsh.harness.SafConfig
 import com.dsh.harness.SafProxyServer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * App 根：把 18 屏串成一条可点击的完整链路。
@@ -205,6 +210,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     // 本机 $HOME/node_modules/@deepseek-ai/ 下没有 dshmarket → 市场本体未安装，
     // 于是市场插件列表为空、页面走安装引导，而不是拿设计稿的示意名充数。
     val ctx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    // v30.7：NAS 重连 / 切回本地工作区要走后台线程（网络 IO），需要协程作用域
+    val scope = rememberCoroutineScope()
     val marketInstalled = remember { DshMarketProbe.isInstalled(ctx) }
 
     // 首启动：没走过引导且没配密钥 → 进 S24 首次配置（在副作用里改路由，不在组合期）
@@ -248,10 +255,31 @@ fun DshApp(startRoute: Route = Route.S3Home) {
         }
     }
 
+    // v30.7（设计稿 v22 S18）：NAS 离线只读降级态。
+    // 数据源 [DshSync.readOnlyNow]——由 lastPingOk（挂载连通性）驱动，
+    // 不是 Agent 判断。safTick / homeInput 变化时重算，让同步结果能刷新横幅。
+    fun lastSyncLabel(): String? = try {
+        val o = org.json.JSONObject(DshSync.lastResultJson(ctx))
+        val at = o.optLong("at", 0L)
+        if (at <= 0L) null
+        else "最后同步 " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(at))
+    } catch (_: Throwable) {
+        null
+    }
+    var nasReadOnly by remember { mutableStateOf(DshSync.readOnlyNow(ctx)) }
+    var nasLastSyncText by remember { mutableStateOf(lastSyncLabel()) }
+
     // v30：SAF 存储目录桥（方案 A）。目录选择器必须在 Compose 宿主侧注册——
     // MainActivity 是另一个 Activity，其 onActivityResult 收不到本 Activity 的选取结果。
     // 选取成功后固化持久化授权、写 SafConfig、幂等起本地代理，再通知相关屏重读。
     var safTick by remember { mutableStateOf(0) }
+    // v30.7：safTick 变化（挂载了新目录）与输入变化都重算只读态与最后同步时间。
+    // 放在 safTick 声明之后 —— 局部变量必须先声明后使用。
+    LaunchedEffect(homeInput, safTick) {
+        nasReadOnly = DshSync.readOnlyNow(ctx)
+        nasLastSyncText = lastSyncLabel()
+    }
     val safLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -378,6 +406,34 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onShowDiagnostics = { sheet = SheetKind.Diagnostics },
                         // v20：右上角描边菜单按钮 → 「本机服务与快捷入口」Sheet
                         onOpenServices = { sheet = SheetKind.Service },
+                        // v30.7（设计稿 v22 S18）：NAS 断连 → 只读降级。
+                        // readOnlyNow 是挂载状态驱动的（ping 失败 + 开了离线转只读），
+                        // 定时任务与手动同步都会更新 lastPingOk，这里只读结论。
+                        nasReadOnly = nasReadOnly,
+                        nasLastSync = nasLastSyncText,
+                        onNasReconnect = {
+                            scope.launch {
+                                toast = "重连中：校验端口可达与挂载状态…"
+                                val ok = withContext(Dispatchers.IO) { DshSync.probeHealth(ctx) }
+                                nasReadOnly = DshSync.readOnlyNow(ctx)
+                                nasLastSyncText = lastSyncLabel()
+                                toast = if (ok) "已恢复连接，写入与同步已放开"
+                                else "仍连不上——去 NAS 连接页看具体失败原因"
+                            }
+                        },
+                        onSwitchLocalWorkspace = {
+                            // v30.7：真切换 —— 走 VM 的 newSession（重建 ACP 会话并改 cwd），
+                            // 不能只改标签（此前 workspace 是 collectAsState 的 val，赋不了值）。
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    DshSync.setMountAsWorkspace(ctx, false)
+                                }
+                                val home = DshBootstrap.home(ctx)
+                                vm.newSession(home.absolutePath)
+                                nasReadOnly = DshSync.readOnlyNow(ctx)
+                                toast = "已切回本地工作区 ${home.name}"
+                            }
+                        },
                     )
 
                     Route.S5ChatRunning -> S5ChatRunning(
@@ -775,8 +831,16 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         safLauncher.launch(null)
                     },
                     currentWorkspace = workspace,
-                    nasConfigured = com.dsh.harness.DshSync.isConfigured(ctx),
+                    nasConfigured = DshSync.isConfigured(ctx),
                     onNas = { nav.go(Route.S51NasSync) },
+                    // v30.7：挂载/只读/远端路径全部取真实配置，不写死文案
+                    nasMounted = DshSync.mountAsWorkspace(ctx),
+                    nasReadOnly = DshSync.readOnlyNow(ctx),
+                    nasLabel = (DshSync.type(ctx).uppercase()
+                        + " · " + (DshSync.host(ctx).ifBlank { "NAS" })),
+                    nasRemotePath = (DshSync.share(ctx).trim('/').let {
+                        if (it.isEmpty()) "dsh-phone/storages" else "$it/dsh-phone/storages"
+                    }),
                 )
 
                 SheetKind.NewSession -> S9NewSessionSheet(

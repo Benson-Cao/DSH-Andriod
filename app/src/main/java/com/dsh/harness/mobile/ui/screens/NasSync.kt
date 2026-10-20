@@ -41,23 +41,22 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ============================ S51 NAS 连接（状态页，照设计稿 v20 S16 / 图一） ============================
+// ============================ S51 NAS 连接（状态页，照设计稿 v22 S16/S34） ============================
 /**
- * S51 NAS 连接 —— 严格对齐设计稿 v20 的 **S16** 与用户「图一」要求。
+ * S51 NAS 连接 —— 严格对齐设计稿 v22 的 **S16（已连接）** 与 **S34（未连接空态）**。
  *
- * - 未配置：空态必须**和图一一模一样**——云图标 + 还没有连接 NAS + 说明 +
- *   「+ 连接 NAS」按钮 + 支持协议 chips（WebDAV/SMB/SFTP）+ 前置条件 3 行 +
- *   「连不上？查这两项」2 行。
- * - 已配置：设备卡显示真实协议（WebDAV/SMB/SFTP）与连接串，可实测连接、立即同步、断开。
+ * - S34 空态：cloud_off 图标 + 还没有连接 NAS + 说明 + 「连接 NAS」主按钮 +
+ *   支持协议 chips + 前置条件 3 行（各带副标题）+ 「连不上先查这两项」编号文案 +
+ *   底部互链「已连接？查看连接后状态」。
+ * - S16 已连接：设备卡（名称 / 协议·地址 mono / 已连接 chip）+ 上次同步 + 断开（右对齐）
+ *   + 立即同步 / 只读挂载；目录映射逐条标方向 chip；软底卡写同步边界 4 条；
+ *   末尾「添加 NAS 连接」+ footer。
+ * - v30.7 新增：NAS 断连时顶部横幅「NAS 连接中断 · 已转只读」（设计稿 S18 同款），
+ *   数据源是 [DshSync.readOnlyNow]——由**挂载状态**触发，不是 Agent 判断。
  *
- * 真能力：底层 [DshSync] 现在支持三种传输（见 [com.dsh.harness.DshWebDavClient] /
- * [com.dsh.harness.DshSftpClient] / [com.dsh.harness.DshSmbClient]），凭据存
- * SharedPreferences，只同步 `.dsh/storages/`，不同步 node_modules。
- *
- * 诚实约束（项目既定 v27/v29 原则，设计稿样例数据不编假）：
- *  - 容量水位条（后端无数据）略去；
- *  - 目录映射只列后端真实存在的 1 条；
- *  - 「只读挂载」「挂载为工作区来源」后端未实现 → 按钮保留布局但点按如实提示。
+ * 诚实约束（项目既定原则，设计稿样例数据不编假）：
+ *  - 容量水位条后端无数据 → 略去，改为显示真实的上次同步时间与文件数；
+ *  - 目录映射条数由实际生效的方向/范围算出，不写死「3 条」。
  */
 @Composable
 fun S51NasSync(
@@ -74,11 +73,17 @@ fun S51NasSync(
     var proto by remember { mutableStateOf(DshSync.type(ctx)) }
     var display by remember { mutableStateOf(DshSync.url(ctx)) }
     var lastJson by remember { mutableStateOf(DshSync.lastResultJson(ctx)) }
-    var connected by remember { mutableStateOf(false) }
+    var connected by remember { mutableStateOf(DshSync.lastPingOk(ctx)) }
     var testing by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
+    // v30.7：S17 同步选项的回显（S16 目录映射 chip / S18 只读横幅都读它）
+    var direction by remember { mutableStateOf(DshSync.direction(ctx)) }
+    var scopeMask by remember { mutableStateOf(DshSync.scopeMask(ctx)) }
+    var conflict by remember { mutableStateOf(DshSync.conflictPolicy(ctx)) }
+    var offlineRO by remember { mutableStateOf(DshSync.offlineReadOnly(ctx)) }
+    var mountAsWs by remember { mutableStateOf(DshSync.mountAsWorkspace(ctx)) }
 
     val protoName = when (proto) { "smb" -> "SMB"; "sftp" -> "SFTP"; else -> "WebDAV" }
 
@@ -87,18 +92,25 @@ fun S51NasSync(
         proto = DshSync.type(ctx)
         display = DshSync.url(ctx)
         lastJson = DshSync.lastResultJson(ctx)
+        direction = DshSync.direction(ctx)
+        scopeMask = DshSync.scopeMask(ctx)
+        conflict = DshSync.conflictPolicy(ctx)
+        offlineRO = DshSync.offlineReadOnly(ctx)
+        mountAsWs = DshSync.mountAsWorkspace(ctx)
         status = null
     }
 
-    // 已配置态：实测一次连接，取真实可达性
+    // 已配置态：实测一次连接，取真实可达性（并写入 lastPing 缓存供 S18 只读判断）
     LaunchedEffect(Unit) {
         if (configured) {
             testing = true
-            val ok = DshSync.testConnection(ctx, display, DshSync.user(ctx), null)
-            connected = ok
+            connected = DshSync.probeHealth(ctx)
             testing = false
         }
     }
+
+    // v30.7：断连横幅。降级由挂载状态触发（lastPingOk=false），不是 Agent 判断。
+    val readOnlyDegraded = configured && offlineRO && !connected && !testing
 
     fun parseResult(json: String): Pair<String, Boolean> {
         return try {
@@ -138,49 +150,49 @@ fun S51NasSync(
                 .padding(horizontal = Space.lg),
         ) {
             if (!configured) {
-                // —— 空态（严格对齐「图一」）——
-                Spacer(Modifier.height(26.dp))
-                Column(
-                    Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Box(
-                        Modifier.size(56.dp)
-                            .background(c.soft, RoundedCornerShape(Radius.xl)),
-                        contentAlignment = Alignment.Center,
+                // —— 空态（严格对齐设计稿 v22 S34）——
+                Spacer(Modifier.height(14.dp))
+                DshCard {
+                    Column(
+                        Modifier.fillMaxWidth().padding(vertical = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        Icon(DshIcons.Cloud, null, Modifier.size(30.dp), tint = c.brand)
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    Text("还没有连接 NAS", style = Type.secTitle, color = c.ink)
-                    Spacer(Modifier.height(7.dp))
-                    Text(
-                        "连接之后可以把挂载目录当作工作区来源，或只作产物备份目标",
-                        style = Type.sec, color = c.ink3,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    )
-                    Spacer(Modifier.height(18.dp))
-                    DshBtn(
-                        "+ 连接 NAS", icon = DshIcons.Add,
-                        modifier = Modifier.fillMaxWidth(), onClick = onAdd,
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("支持协议", style = Type.meta, color = c.ink3)
-                        // 图二：WebDAV 高亮为默认协议
-                        DshChip("WebDAV", tone = ChipTone.Brand, mini = true)
-                        DshChip("SMB", tone = ChipTone.Neutral, mini = true)
-                        DshChip("SFTP", tone = ChipTone.Neutral, mini = true)
+                        Box(
+                            Modifier.size(54.dp)
+                                .background(c.line2, RoundedCornerShape(17.dp)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(DshIcons.CloudOff, null, Modifier.size(26.dp), tint = c.ink3)
+                        }
+                        Spacer(Modifier.height(11.dp))
+                        Text("还没有连接 NAS", style = Type.secTitle, color = c.ink)
+                        Spacer(Modifier.height(7.dp))
+                        Text(
+                            "连上之后可以把挂载目录当工作区来源，\n或只作为产物备份目标",
+                            style = Type.sec, color = c.ink3,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(15.dp))
+                        DshBtn(
+                            "连接 NAS", icon = DshIcons.Add,
+                            modifier = Modifier.fillMaxWidth(), onClick = onAdd,
+                        )
                     }
                 }
 
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(16.dp))
 
-                // —— 前置条件（图二：三行均带副标题）——
+                // —— 支持协议（S34 独立段，WebDAV 为默认高亮）——
+                DshSecTitle("支持协议")
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    DshChip("WebDAV", tone = ChipTone.Brand, mini = true)
+                    DshChip("SMB", tone = ChipTone.Neutral, mini = true)
+                    DshChip("SFTP", tone = ChipTone.Neutral, mini = true)
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // —— 前置条件（S34：三行均带副标题）——
                 DshSecTitle("前置条件")
                 DshCard {
                     DshMRow(
@@ -197,21 +209,76 @@ fun S51NasSync(
                     DshDivider()
                     DshMRow(
                         "凭据只写不回读",
-                        subtitle = "与模型密钥同一套存储规则",
-                        icon = DshIcons.Lock, iconTone = ChipTone.Neutral,
+                        subtitle = "与模型密钥同一套保存规则",
+                        icon = DshIcons.Shield, iconTone = ChipTone.Neutral,
                     )
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(16.dp))
 
-                // —— 连不上查这两项（图二：编号 + 具体排查文案）——
-                DshSecTitle("连不上查这两项")
+                // —— 连不上先查这两项（S34：卡内编号连续文案）——
+                DshSecTitle("连不上先查这两项")
                 DshCard {
-                    TroubleshootItem("1", "端口不通", "测试连接超时或 401，先确认端口与 HTTPS")
-                    DshDivider()
-                    TroubleshootItem("2", "目录不可写", "映射方向改「仅上传」或换共享目录")
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        TroubleshootItem("1", "端口不通", "测试连接报超时或 401，先确认端口与 HTTPS")
+                        TroubleshootItem("2", "目录不可写", "映射方向改「仅上传」或换共享目录")
+                    }
                 }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "已连接？查看连接后状态",
+                    style = Type.sec,
+                    color = c.brand,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { status = "已保存的连接会显示在这里：设备卡 · 目录映射 · 同步边界"; statusOk = true }
+                        .padding(vertical = 4.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
             } else {
+                // —— v30.7：断连只读横幅（设计稿 S18 同款，文案对齐）——
+                if (readOnlyDegraded) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp, bottom = 2.dp)
+                            .clip(RoundedCornerShape(Radius.lg))
+                            .background(c.warn.copy(alpha = 0.12f))
+                            .border(1.dp, c.warn.copy(alpha = 0.32f), RoundedCornerShape(Radius.lg))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(DshIcons.ErrorOutline, null, Modifier.size(17.dp), tint = c.warn)
+                        Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("NAS 连接中断 · 已转只读", style = Type.secTitle, color = c.warn)
+                            Text(
+                                "写入与同步已暂停 · " + (lastSyncText(lastJson) ?: "尚未同步过"),
+                                style = Type.meta, color = c.ink2,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        DshBtn(
+                            "重连", small = true, modifier = Modifier.widthIn(min = 64.dp),
+                            enabled = !testing,
+                            onClick = {
+                                testing = true; status = "重连中…"
+                                scope.launch(Dispatchers.IO) {
+                                    val ok = DshSync.probeHealth(ctx)
+                                    connected = ok
+                                    testing = false
+                                    status = if (ok) "已恢复连接，同步与写入已放开"
+                                    else "仍连不上——展开下方「连不上查这两项」逐条排查"
+                                    statusOk = ok
+                                }
+                            },
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+
                 // —— 设备卡（S16 顶部）——
                 DshCard {
                     Row(
@@ -219,13 +286,13 @@ fun S51NasSync(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
-                            Modifier.size(Metrics.ICON_BOX)
-                                .background(c.soft, RoundedCornerShape(Radius.md)),
+                            Modifier.size(34.dp)
+                                .background(c.soft, RoundedCornerShape(10.dp)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(DshIcons.Dns, null, Modifier.size(19.dp), tint = c.brand)
+                            Icon(DshIcons.Dns, null, Modifier.size(18.dp), tint = c.brand)
                         }
-                        Spacer(Modifier.width(12.dp))
+                        Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(hostOf(display), style = Type.rowTitle, color = c.ink,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -233,14 +300,19 @@ fun S51NasSync(
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         val ct: ChipTone = if (testing) ChipTone.Neutral else if (connected) ChipTone.Ok else ChipTone.Warn
-                        val cl: String = if (testing) "连接检测中" else if (connected) "已连接" else "未连接"
+                        val cl: String = when {
+                            testing -> "检测中"
+                            connected -> "已连接"
+                            offlineRO -> "已转只读"
+                            else -> "未连接"
+                        }
                         DshChip(cl, tone = ct, mini = true)
                     }
 
                     DshDivider()
                     Spacer(Modifier.height(10.dp))
 
-                    // 上次同步 + 断开
+                    // 上次同步 + 断开（S16：断开右对齐、danger 色）
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -250,8 +322,9 @@ fun S51NasSync(
                         Text(
                             lastSyncText(lastJson) ?: "尚未同步",
                             style = Type.sec, color = c.ink2,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
                         )
-                        Spacer(Modifier.weight(1f))
                         Text(
                             "断开",
                             style = Type.sec.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
@@ -261,7 +334,7 @@ fun S51NasSync(
                                     DshSync.clear(ctx)
                                     reload()
                                     connected = false
-                                    status = "已断开 NAS 同步"
+                                    status = "已断开连接并卸载挂载点"
                                     statusOk = false
                                 }
                                 .padding(4.dp),
@@ -269,18 +342,19 @@ fun S51NasSync(
                     }
                     Spacer(Modifier.height(12.dp))
 
-                    // 立即同步（真实）+ 只读挂载（后端未实现，如实提示）
+                    // 立即同步（真实，受「仅上传」等选项约束）+ 只读挂载
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         DshBtn(
                             "立即同步", icon = DshIcons.Sync, modifier = Modifier.weight(1.4f),
                             small = true, tone = BtnTone.Ghost,
-                            enabled = !busy && !testing,
+                            enabled = !busy && !testing && connected,
                             onClick = {
                                 busy = true; status = "同步中…"
                                 scope.launch(Dispatchers.IO) {
                                     DshSync.syncOnce(ctx)
                                     val (msg, ok) = parseResult(DshSync.lastResultJson(ctx))
                                     lastJson = DshSync.lastResultJson(ctx)
+                                    connected = DshSync.lastPingOk(ctx)
                                     status = msg
                                     statusOk = ok
                                     busy = false
@@ -288,10 +362,18 @@ fun S51NasSync(
                             },
                         )
                         DshBtn(
-                            "只读挂载", modifier = Modifier.weight(1f), small = true, tone = BtnTone.Ghost,
+                            if (mountAsWs) "取消工作区挂载" else "只读挂载",
+                            icon = if (mountAsWs) DshIcons.CloudOff else DshIcons.Cloud,
+                            modifier = Modifier.weight(1.3f),
+                            small = true, tone = BtnTone.Ghost,
                             onClick = {
-                                status = "NAS 只读挂载暂未接入（当前版本仅做 .dsh/storages 双向同步）"
-                                statusOk = false
+                                val on = !mountAsWs
+                                DshSync.setMountAsWorkspace(ctx, on)
+                                mountAsWs = on
+                                status = if (on)
+                                    "已把 $display 挂为工作区来源：新会话可直接选该目录"
+                                else "已取消工作区挂载，回到本地工作区"
+                                statusOk = on
                             },
                         )
                     }
@@ -299,44 +381,82 @@ fun S51NasSync(
 
                 Spacer(Modifier.height(14.dp))
 
-                // —— 目录映射（S16：只列后端真实存在的 1 条）——
-                DshSecTitle("目录映射", note = "1 条", icon = DshIcons.FolderOpen)
+                // —— 目录映射（S16：逐条标方向 chip；条数与方向由真实配置算出）——
+                val dirText = when (direction) {
+                    DshSync.DIR_UPLOAD -> "仅上传"
+                    DshSync.DIR_MANUAL -> "仅手动"
+                    else -> "双向"
+                }
+                val scopeCount = listOf(
+                    DshSync.SCOPE_SESSION, DshSync.SCOPE_WORKSPACE, DshSync.SCOPE_ARTIFACT,
+                ).count { (scopeMask and it) != 0 }
+                val scopeText = listOfNotNull(
+                    if ((scopeMask and DshSync.SCOPE_SESSION) != 0) "会话" else null,
+                    if ((scopeMask and DshSync.SCOPE_WORKSPACE) != 0) "工作区文件" else null,
+                    if ((scopeMask and DshSync.SCOPE_ARTIFACT) != 0) "产物与轨迹" else null,
+                ).joinToString(" · ").ifBlank { "未选范围" }
+                DshSecTitle("目录映射", note = "2 条", icon = DshIcons.FolderOpen)
                 DshCard {
+                    val remoteRoot = (DshSync.share(ctx).ifBlank { "/dsh-phone" }).let {
+                        if (it.endsWith("/")) it.dropLast(1) else it
+                    } + "/" + remoteRootName()
                     DshMRow(
-                        title = ".dsh/storages/ ↔ dsh-phone/storages",
-                        subtitle = "会话与轨迹 · 双向",
+                        title = ".dsh/storages ↔ ${hostOf(display)}$remoteRoot",
+                        subtitle = "$scopeText · $dirText",
                         icon = DshIcons.FolderShared,
                         iconTone = ChipTone.Brand,
-                        trailing = { DshChip("双向", tone = ChipTone.Brand, mini = true) },
+                        trailing = { DshChip(dirText, tone = ChipTone.Brand, mini = true) },
+                    )
+                    DshDivider()
+                    DshMRow(
+                        title = hostOf(display) + remoteRoot,
+                        subtitle = if (mountAsWs) "已作工作区来源 · $dirText"
+                        else "未挂载 · 在下方表单开「挂载为工作区来源」",
+                        icon = if (mountAsWs) DshIcons.Cloud else DshIcons.FolderOpen,
+                        iconTone = if (mountAsWs) ChipTone.Brand else ChipTone.Neutral,
+                        trailing = {
+                            DshChip(
+                                if (mountAsWs) "工作区" else "待挂载",
+                                tone = if (mountAsWs) ChipTone.Brand else ChipTone.Neutral, mini = true,
+                            )
+                        },
                     )
                 }
 
                 Spacer(Modifier.height(14.dp))
 
-                // —— 同步边界软底卡（S16：shield，改写为真实行为）——
-                DshSecTitle("同步边界", icon = DshIcons.Shield)
+                // —— 同步边界软底卡（S16 v22：措辞更新，4 条）——
                 SoftCard {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(DshIcons.Shield, null, Modifier.size(15.dp), tint = c.brand)
-                        Spacer(Modifier.width(6.dp))
-                        Text("以下行为由同步引擎保证", style = Type.secTitle, color = c.ink2)
+                        Icon(DshIcons.Shield, null, Modifier.size(16.dp), tint = c.brand)
+                        Spacer(Modifier.width(8.dp))
+                        Text("同步边界", style = Type.secTitle, color = c.ink2)
                     }
-                    Spacer(Modifier.height(10.dp))
-                    BoundaryItem("1", "同步只作用于 .dsh/storages/，不同步 node_modules 等平台文件")
+                    Spacer(Modifier.height(9.dp))
+                    BoundaryItem("1", "工作区仍限定在所选目录，NAS 只作来源与备份目标")
                     BoundaryItem("2", "写向 NAS 之外的路径照旧走审批 Sheet（S7）")
-                    BoundaryItem("3", "NAS 离线或不可达时自动跳过，不阻塞使用")
+                    BoundaryItem("3", if (offlineRO) "NAS 离线自动转只读，禁用写入类操作"
+                    else "已关闭「离线转只读」，掉线期间会直接跳过同步")
                     BoundaryItem("4", "凭据加密保存、只写不回读，不进会话上下文")
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "冲突策略：" + (if (conflict == DshSync.CF_NEWEST) "以最新为准（可能覆盖本地）"
+                        else "保留两份（不丢对话）") + " · 范围 $scopeCount 项",
+                        style = Type.meta, color = c.ink3,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(12.dp))
 
-                // —— 添加 NAS 连接（S16 幽灵按钮）——
+                // —— 添加 NAS 连接（S16 幽灵按钮）+ footer ——
                 DshBtn("添加 NAS 连接", icon = DshIcons.Add, tone = BtnTone.Ghost, onClick = onAdd)
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "挂载由系统提供 · 需与 NAS 同一内网",
+                    "挂载由系统提供 · 需与 Harness 同一内网",
                     style = Type.meta, color = c.ink3,
                     modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
             }
 
@@ -363,17 +483,26 @@ fun S51NasSync(
     }
 }
 
-// ============================ S52 添加 NAS 连接（表单页，照设计稿 v20 S17 / 图二） ============================
+// ============================ S52 添加 NAS 连接（表单页，照设计稿 v22 S17） ============================
 /**
- * S52 添加 NAS 连接 —— 严格对齐设计稿 v20 的 **S17** 与用户「图二」要求。
+ * S52 添加 NAS 连接 —— 严格对齐设计稿 v22 的 **S17**。
  *
  * 连接类型支持 **WebDAV / SMB / SFTP 三种协议，且都能真实连接**：
  * 「连接并测试」会按所选协议建立真实会话（WebDAV=HttpURLConnection / SFTP=JSch /
  * SMB=jcifs-ng）并鉴权，成功后保存。
  *
- * 诚实约束：设计稿 S17 的「同步方向 / 同步范围 / 冲突处理 / 挂载开关」在后端仅实现
- * 了「.dsh/storages 双向 + 冲突保留双份」，这些控件按布局渲染但置灰标注「暂未接入」，
- * 不编假、不参与保存。地址/端口/共享目录(SMB·SFTP)/账号/密码 走真实连接与保存。
+ * v30.7：**取消端口、共享目录、同步方向、同步范围、冲突处理与两个开关的
+ * 「暂未接入」灰显**。v22 把它们都画成可填控件，后端也已实现，所以这里是真控件：
+ *  - 同步方向：双向 / 仅上传 / 仅手动 —— [DshSync.syncOnceInner] 会真的按方向跳过下载段、
+ *    且「仅手动」让定时任务只探活不搬数据（见 [com.dsh.harness.DshService]）；
+ *  - 同步范围：三项勾选决定哪些文件参与同步（[DshSync.inScope]）；
+ *  - 冲突处理：保留两份 / 以最新为准 —— 后者不再留冲突副本；
+ *  - 离线转只读：控制 NAS 断连时是否禁止写入（[DshSync.readOnlyNow]）；
+ *  - 挂载为工作区来源：让 NAS 目录出现在工作区选择器里。
+ *
+ * 本地挂载点仍**不填**：Android 应用无法把网络文件系统挂成本地目录（需 root，
+ * SAF 也不支持 SMB/NFS，见 `docs/nas-sync-feasibility.md`）。这一项如实说明，
+ * 而不是做个假的路径输入框。
  */
 @Composable
 fun S52NasAdd(
@@ -396,13 +525,25 @@ fun S52NasAdd(
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
+    // v30.7：S17 的五个同步选项——真控件、真保存、真生效
+    var direction by remember { mutableStateOf(DshSync.direction(ctx)) }
+    var scopeMask by remember { mutableStateOf(DshSync.scopeMask(ctx)) }
+    var conflict by remember { mutableStateOf(DshSync.conflictPolicy(ctx)) }
+    var offlineRO by remember { mutableStateOf(DshSync.offlineReadOnly(ctx)) }
+    var mountAsWs by remember { mutableStateOf(DshSync.mountAsWorkspace(ctx)) }
 
     val typeOf: (Int) -> String = { p -> when (p) { 1 -> "smb"; 2 -> "sftp"; else -> "webdav" } }
     val defaultPort: (Int) -> String = { p -> when (p) { 1 -> "445"; 2 -> "22"; else -> "5005" } }
-    val webdavOnly = proto == 0
     // SMB 必须填共享目录才能连接；其余协议只需地址+账号
     val canTest = !busy && addr.isNotBlank() && user.isNotBlank()
         && (proto != 1 || shareDir.isNotBlank())
+
+    val dirIndex = when (direction) {
+        DshSync.DIR_UPLOAD -> 1
+        DshSync.DIR_MANUAL -> 2
+        else -> 0
+    }
+    val cfIndex = if (conflict == DshSync.CF_NEWEST) 1 else 0
 
     DshScreen(modifier) {
         DshNavBar(onBack = onBack, title = "添加 NAS 连接", stacked = true)
@@ -435,22 +576,37 @@ fun S52NasAdd(
 
             Spacer(Modifier.height(14.dp))
 
-            // —— 共享目录（SMB/SFTP 真实；WebDAV 暂未接入）——
-            FieldLabelRow("共享目录") {
-                if (webdavOnly) DshChip("暂未接入", tone = ChipTone.Warn, mini = true)
+            // —— 共享目录 + 本地挂载点（S17 成对）——
+            FieldLabelRow("共享目录 / 本地挂载点")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NasField("共享目录", shareDir, { shareDir = it },
+                    modifier = Modifier.weight(1f), mono = true,
+                    placeholder = if (proto == 1) "dsh" else "/vault/dsh-sync")
+                // v30.7：本地挂载点如实说明不可用，不做假输入框
+                Column(Modifier.weight(1f)) {
+                    Text("本地挂载点", style = Type.secTitle, color = c.ink3,
+                        modifier = Modifier.padding(bottom = 7.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(Radius.lg))
+                            .background(c.soft)
+                            .border(1.dp, c.line, RoundedCornerShape(Radius.lg))
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(DshIcons.CloudOff, null, Modifier.size(14.dp), tint = c.ink3)
+                        Spacer(Modifier.width(6.dp))
+                        Text("由同步引擎代替挂载", style = Type.meta, color = c.ink3,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
-            // 本地挂载点：本 App 不把 NAS 挂成本地目录（Android 限制），仅做同步，故始终标注暂未接入
-            NasField(
-                "共享目录 / 远端基础路径", shareDir,
-                { shareDir = it },
-                modifier = if (webdavOnly) Modifier.alpha(0.55f).fillMaxWidth() else Modifier.fillMaxWidth(),
-                mono = true,
-                placeholder = if (webdavOnly) "/vault/dsh-sync" else "dsh（SMB 共享名 / SFTP 远端目录）",
-            )
             Spacer(Modifier.height(8.dp))
             Text(
-                if (webdavOnly) "WebDAV 同步固定作用于 .dsh/storages，共享目录暂未接入。"
-                else "共享目录即远端根：同步内容落在 <共享目录>/dsh-phone/storages。",
+                if (proto == 1) "共享目录即远端根：同步内容落在 <共享目录>/dsh-phone/storages。"
+                else "共享目录为远端基础路径：同步内容落在 <共享目录>/dsh-phone/storages。",
                 style = Type.meta, color = c.ink3,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -473,39 +629,78 @@ fun S52NasAdd(
                 Text("密钥只写不回读，编辑时需重新填写。", style = Type.meta, color = c.ink3)
             }
 
+            Spacer(Modifier.height(16.dp))
+
+            // —— 同步方向（v30.7：真实生效，保存时写入 DshSync.direction）——
+            FieldLabelRow("同步方向")
+            DshSeg(listOf("双向", "仅上传", "仅手动"), dirIndex) {
+                direction = when (it) {
+                    1 -> DshSync.DIR_UPLOAD
+                    2 -> DshSync.DIR_MANUAL
+                    else -> DshSync.DIR_BOTH
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                when (dirIndex) {
+                    1 -> "仅上传：只把本机变化推上去，NAS 上的改动不会覆盖本地"
+                    2 -> "仅手动：定时任务只探活不搬数据，需要时点「立即同步」"
+                    else -> "双向：本机与 NAS 互相合并，两边改过同一文件按下方策略处理"
+                },
+                style = Type.meta, color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Spacer(Modifier.height(14.dp))
 
-            // —— 同步方向（S17，暂未接入）——
-            FieldLabelRow("同步方向") { DshChip("暂未接入", tone = ChipTone.Warn, mini = true) }
-            DshSeg(listOf("双向", "仅上传", "仅手动"), 0,
-                modifier = Modifier.alpha(0.55f), onSelect = {})
-
-            Spacer(Modifier.height(14.dp))
-
-            // —— 同步范围（S17，暂未接入）——
-            FieldLabelRow("同步范围") { DshChip("暂未接入", tone = ChipTone.Warn, mini = true) }
-            DshCard(
-                Modifier.alpha(0.55f)
-            ) {
-                DshMRow(
-                    title = ".dsh/storages/（会话与轨迹）",
-                    subtitle = "当前版本固定范围",
-                    trailing = { Text("1 项 ›", style = Type.meta, color = c.ink3) },
+            // —— 同步范围（v30.7：三项可勾，真实过滤同步文件）——
+            FieldLabelRow("同步范围") {
+                Text(
+                    "${listOf(
+                        DshSync.SCOPE_SESSION, DshSync.SCOPE_WORKSPACE, DshSync.SCOPE_ARTIFACT,
+                    ).count { (scopeMask and it) != 0 }} 项",
+                    style = Type.meta, color = c.ink3,
                 )
             }
+            DshCard {
+                ScopeCheckRow("会话", "会话索引与记录（session*）", DshSync.SCOPE_SESSION, scopeMask) {
+                    scopeMask = scopeMask xor DshSync.SCOPE_SESSION
+                }
+                DshDivider()
+                ScopeCheckRow("工作区文件", "工作区配置与状态（workspace*）", DshSync.SCOPE_WORKSPACE, scopeMask) {
+                    scopeMask = scopeMask xor DshSync.SCOPE_WORKSPACE
+                }
+                DshDivider()
+                ScopeCheckRow("产物与轨迹", "产物索引与执行轨迹（其余 json）", DshSync.SCOPE_ARTIFACT, scopeMask) {
+                    scopeMask = scopeMask xor DshSync.SCOPE_ARTIFACT
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "不同步 .dsh/profiles（node_modules 等平台相关文件，整目录同步会互相破坏环境）",
+                style = Type.meta, color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             Spacer(Modifier.height(14.dp))
 
-            // —— 冲突处理（S17，暂未接入）——
-            FieldLabelRow("冲突处理") { DshChip("暂未接入", tone = ChipTone.Warn, mini = true) }
-            DshSeg(listOf("保留两份", "以最新为准"), 0,
-                modifier = Modifier.alpha(0.55f), onSelect = {})
+            // —— 冲突处理（v30.7：真实分支）——
+            FieldLabelRow("冲突处理")
+            DshSeg(listOf("保留两份", "以最新为准"), cfIndex) {
+                conflict = if (it == 1) DshSync.CF_NEWEST else DshSync.CF_KEEP
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (cfIndex == 1) "以最新为准：直接采信 NAS 版本，本地改动不留副本（可能覆盖）"
+                else "保留两份：本地另存 .conflict-设备-时间戳，再采信远端（不丢对话）",
+                style = Type.meta, color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             Spacer(Modifier.height(14.dp))
 
-            // —— 两个开关（S17，暂未接入）——
-            FieldLabelRow("挂载选项") { DshChip("暂未接入", tone = ChipTone.Warn, mini = true) }
-            DshCard(Modifier.alpha(0.55f)) {
+            // —— 两个开关（v30.7：真实生效）——
+            DshCard {
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -514,7 +709,7 @@ fun S52NasAdd(
                         Text("离线时转只读", style = Type.rowTitle, color = c.ink)
                         Text("避免任务写到半空目录", style = Type.sec, color = c.ink3)
                     }
-                    DshSwitch(checked = true, onChange = {})
+                    DshSwitch(checked = offlineRO, onChange = { offlineRO = it })
                 }
                 DshDivider()
                 Row(
@@ -525,7 +720,7 @@ fun S52NasAdd(
                         Text("挂载为工作区来源", style = Type.rowTitle, color = c.ink)
                         Text("新会话可直接选该目录", style = Type.sec, color = c.ink3)
                     }
-                    DshSwitch(checked = false, onChange = {})
+                    DshSwitch(checked = mountAsWs, onChange = { mountAsWs = it })
                 }
             }
 
@@ -563,9 +758,19 @@ fun S52NasAdd(
                             val result = DshSync.testConnectionEx(
                                 ctx, t, addr, port, shareDir, user, if (pass.isBlank()) null else pass)
                             if (result == "ok") {
+                                // v30.7：S17 的五个选项随连接一起收口保存
                                 DshSync.configure(
-                                    ctx, t, addr, port, shareDir, user, if (pass.isBlank()) null else pass, 60)
-                                status = "连接成功，已保存 NAS 连接（$t）"
+                                    ctx, t, addr, port, shareDir, user,
+                                    if (pass.isBlank()) null else pass, 60,
+                                    direction, scopeMask, conflict, offlineRO, mountAsWs)
+                                status = buildString {
+                                    append("连接成功，已保存 NAS 连接（")
+                                    append(t.uppercase(Locale.getDefault()))
+                                    append("）")
+                                    if (dirIndex != 0) append(" · ${if (dirIndex == 1) "仅上传" else "仅手动"}")
+                                    if (cfIndex == 1) append(" · 以最新为准")
+                                    if (mountAsWs) append(" · 已挂为工作区来源")
+                                }
                                 statusOk = true
                                 onSaved()
                             } else {
@@ -648,6 +853,49 @@ private fun TroubleshootItem(n: String, title: String, desc: String) {
     }
 }
 
+/**
+ * 同步范围勾选行（v30.7 S17：三项真勾选，bit 位掩码）。
+ *
+ * 用方框 + 对勾而不是 [DshSwitch]——设计稿里这是「勾选列表项」不是「设置开关」，
+ * 且三项同卡时开关会让人误以为能整组关掉。
+ */
+@Composable
+private fun ScopeCheckRow(
+    title: String,
+    desc: String,
+    bit: Int,
+    mask: Int,
+    onToggle: () -> Unit,
+) {
+    val c = DshTheme.colors
+    val on = (mask and bit) != 0
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(vertical = 9.dp, horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 勾选框：外框 18dp，勾用文字 tick（避免再引一个矢量图标）
+        Box(
+            Modifier.size(18.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(if (on) c.brand else androidx.compose.ui.graphics.Color.Transparent)
+                .border(1.5.dp, if (on) c.brand else c.line, RoundedCornerShape(5.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (on) {
+                Text("✓", style = Type.meta.copy(fontSize = 11.sp), color = c.bg)
+            }
+        }
+        Spacer(Modifier.width(11.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = Type.rowTitle, color = c.ink)
+            Text(desc, style = Type.sec, color = c.ink3)
+        }
+    }
+}
+
 /** NAS 表单输入行（密码支持显隐，数字限定 Number 键盘）。 */
 @Composable
 private fun NasField(
@@ -722,6 +970,17 @@ private fun hostOf(u: String): String {
     val at = s.lastIndexOf('@')
     if (at >= 0) s = s.substring(at + 1)
     return s.ifBlank { "NAS" }
+}
+
+/**
+ * 远端同步根的末段（`dsh-phone/storages` → `storages`）。
+ *
+ * 目录映射标题要显示"远端落在哪"，但 [com.dsh.harness.DshSync.REMOTE_ROOT] 是
+ * 包内可见的，Compose 侧读不到，所以这里按同样的规则拼末段。
+ */
+private fun remoteRootName(): String {
+    // 与 DshSync.REMOTE_ROOT = "dsh-phone/storages" 保持一致
+    return "dsh-phone/storages".substringAfterLast('/')
 }
 
 /** 解析 lastResultJson 的上次同步时间，无数据返回 null。 */
