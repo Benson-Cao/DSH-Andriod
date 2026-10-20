@@ -38,20 +38,23 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ============================ S51 NAS 连接（状态页，照设计稿 v20 S16） ============================
+// ============================ S51 NAS 连接（状态页，照设计稿 v20 S16 / 图一） ============================
 /**
- * S51 NAS 连接（飞牛 fnOS 的 WebDAV 同步）—— 严格对齐设计稿 v20 的 **S16**。
+ * S51 NAS 连接 —— 严格对齐设计稿 v20 的 **S16** 与用户「图一」要求。
  *
- * 真能力：底层 [DshSync] + [com.dsh.harness.DshWebDavClient]（纯 JDK WebDAV 客户端，
- * 凭据存 SharedPreferences，只同步 `.dsh/storages/`，不同步 node_modules）。
+ * - 未配置：空态必须**和图一一模一样**——云图标 + 还没有连接 NAS + 说明 +
+ *   「+ 连接 NAS」按钮 + 支持协议 chips（WebDAV/SMB/SFTP）+ 前置条件 3 行 +
+ *   「连不上？查这两项」2 行。
+ * - 已配置：设备卡显示真实协议（WebDAV/SMB/SFTP）与连接串，可实测连接、立即同步、断开。
  *
- * 与「外部存储(SAF)」（`S50StorageDir`）是**两套独立能力**（用户：nas是nas，saf桥是saf桥）。
+ * 真能力：底层 [DshSync] 现在支持三种传输（见 [com.dsh.harness.DshWebDavClient] /
+ * [com.dsh.harness.DshSftpClient] / [com.dsh.harness.DshSmbClient]），凭据存
+ * SharedPreferences，只同步 `.dsh/storages/`，不同步 node_modules。
  *
- * 诚实约束（项目既定 v27/v29 原则，设计稿 v20 的样例数据不编假）：
- *  - 设备发现名「群晖 DS920+」后端无法获得 → 用 URL 主机替代；
- *  - 容量水位条（218 GB / 1.0 TB）后端无数据 → 略去；
- *  - 3 条映射（工作区/单向/定时）实为设计样例 → 只列后端真实存在的 1 条；
- *  - 「只读挂载」「挂载为工作区来源」后端未实现 → 按钮保留布局但点按如实提示暂未接入。
+ * 诚实约束（项目既定 v27/v29 原则，设计稿样例数据不编假）：
+ *  - 容量水位条（后端无数据）略去；
+ *  - 目录映射只列后端真实存在的 1 条；
+ *  - 「只读挂载」「挂载为工作区来源」后端未实现 → 按钮保留布局但点按如实提示。
  */
 @Composable
 fun S51NasSync(
@@ -65,7 +68,8 @@ fun S51NasSync(
     val scope = rememberCoroutineScope()
 
     var configured by remember { mutableStateOf(DshSync.isConfigured(ctx)) }
-    var url by remember { mutableStateOf(DshSync.url(ctx)) }
+    var proto by remember { mutableStateOf(DshSync.type(ctx)) }
+    var display by remember { mutableStateOf(DshSync.url(ctx)) }
     var lastJson by remember { mutableStateOf(DshSync.lastResultJson(ctx)) }
     var connected by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
@@ -73,9 +77,12 @@ fun S51NasSync(
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
 
+    val protoName = when (proto) { "smb" -> "SMB"; "sftp" -> "SFTP"; else -> "WebDAV" }
+
     fun reload() {
         configured = DshSync.isConfigured(ctx)
-        url = DshSync.url(ctx)
+        proto = DshSync.type(ctx)
+        display = DshSync.url(ctx)
         lastJson = DshSync.lastResultJson(ctx)
         status = null
     }
@@ -84,7 +91,7 @@ fun S51NasSync(
     LaunchedEffect(Unit) {
         if (configured) {
             testing = true
-            val ok = DshSync.testConnection(ctx, url, DshSync.user(ctx), null)
+            val ok = DshSync.testConnection(ctx, display, DshSync.user(ctx), null)
             connected = ok
             testing = false
         }
@@ -110,7 +117,7 @@ fun S51NasSync(
     DshScreen(modifier) {
         DshNavBar(
             onBack = onBack, title = "NAS 连接", stacked = true,
-            subtitle = "飞牛 NAS · WebDAV",
+            subtitle = if (configured) "飞牛 NAS · $protoName" else "飞牛 NAS",
             actions = {
                 DshIBtn(DshIcons.HelpOutline, "说明", onClick = {
                     status = "NAS 同步仅同步会话/工作区数据（.dsh/storages），不同步 node_modules 等平台文件；凭据加密保存、只写不回读。"
@@ -128,16 +135,66 @@ fun S51NasSync(
                 .padding(horizontal = Space.lg),
         ) {
             if (!configured) {
-                Spacer(Modifier.height(28.dp))
-                DshEmpty("尚未配置 NAS 连接", icon = DshIcons.CloudOff)
-                Spacer(Modifier.height(16.dp))
-                DshBtn("添加 NAS 连接", icon = DshIcons.Add, onClick = onAdd)
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "需与 NAS 同一内网 · 当前仅支持 WebDAV",
-                    style = Type.meta, color = c.ink3,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // —— 空态（严格对齐「图一」）——
+                Spacer(Modifier.height(26.dp))
+                Column(
+                    Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(
+                        Modifier.size(56.dp)
+                            .background(c.soft, RoundedCornerShape(Radius.xl)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(DshIcons.Cloud, null, Modifier.size(30.dp), tint = c.brand)
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text("还没有连接 NAS", style = Type.secTitle, color = c.ink)
+                    Spacer(Modifier.height(7.dp))
+                    Text(
+                        "连接之后可以把挂载目录当作工作区来源，或只作产物备份目标",
+                        style = Type.sec, color = c.ink3,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    DshBtn(
+                        "+ 连接 NAS", icon = DshIcons.Add,
+                        modifier = Modifier.fillMaxWidth(), onClick = onAdd,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("支持协议", style = Type.meta, color = c.ink3)
+                        DshChip("WebDAV", tone = ChipTone.Neutral, mini = true)
+                        DshChip("SMB", tone = ChipTone.Neutral, mini = true)
+                        DshChip("SFTP", tone = ChipTone.Neutral, mini = true)
+                    }
+                }
+
+                Spacer(Modifier.height(22.dp))
+
+                // —— 前置条件 ——
+                DshSecTitle("前置条件")
+                DshCard {
+                    DshMRow("同一内网", icon = DshIcons.Wifi, iconTone = ChipTone.Neutral)
+                    DshDivider()
+                    DshMRow("共享目录可读写", icon = DshIcons.FolderShared, iconTone = ChipTone.Neutral)
+                    DshDivider()
+                    DshMRow("凭据只写不回读", icon = DshIcons.Lock, iconTone = ChipTone.Neutral)
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                // —— 连不上？查这两项 ——
+                DshSecTitle("连不上？查这两项")
+                DshCard {
+                    DshMRow("确认飞牛 NAS 已开启对应服务", icon = DshIcons.Power, iconTone = ChipTone.Warn)
+                    DshDivider()
+                    DshMRow("确认手机与 NAS 同一 Wi-Fi", icon = DshIcons.Wifi, iconTone = ChipTone.Warn)
+                }
             } else {
                 // —— 设备卡（S16 顶部）——
                 DshCard {
@@ -154,17 +211,15 @@ fun S51NasSync(
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(hostOf(url), style = Type.rowTitle, color = c.ink,
+                            Text(hostOf(display), style = Type.rowTitle, color = c.ink,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("WebDAV · $url", style = Type.meta, color = c.ink3,
+                            Text("$protoName · $display", style = Type.meta, color = c.ink3,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         val ct: ChipTone = if (testing) ChipTone.Neutral else if (connected) ChipTone.Ok else ChipTone.Warn
                         val cl: String = if (testing) "连接检测中" else if (connected) "已连接" else "未连接"
                         DshChip(cl, tone = ct, mini = true)
                     }
-
-                    // 设计稿 v20 的容量水位条（218 GB / 1.0 TB）后端无数据，按诚实原则略去。
 
                     DshDivider()
                     Spacer(Modifier.height(10.dp))
@@ -292,15 +347,17 @@ fun S51NasSync(
     }
 }
 
-// ============================ S52 添加 NAS 连接（表单页，照设计稿 v20 S17） ============================
+// ============================ S52 添加 NAS 连接（表单页，照设计稿 v20 S17 / 图二） ============================
 /**
- * S52 添加 NAS 连接 —— 严格对齐设计稿 v20 的 **S17**。
+ * S52 添加 NAS 连接 —— 严格对齐设计稿 v20 的 **S17** 与用户「图二」要求。
  *
- * 诚实约束：v20 S17 里的「连接类型 SMB/SFTP」「共享目录 / 本地挂载点」
- * 「同步方向」「同步范围」「冲突处理」「离线时转只读 / 挂载为工作区来源 开关」
- * 在后端均**未实现**（当前仅 WebDAV + .dsh/storages 双向选择性同步 + 冲突保留双份）。
- * 这些控件按 v20 布局渲染但置灰并标注「暂未接入」，不编假、不参与保存；
- * 仅 WebDAV 的 地址/端口/账号/密码 走真实连接与保存。
+ * 连接类型支持 **WebDAV / SMB / SFTP 三种协议，且都能真实连接**：
+ * 「连接并测试」会按所选协议建立真实会话（WebDAV=HttpURLConnection / SFTP=JSch /
+ * SMB=jcifs-ng）并鉴权，成功后保存。
+ *
+ * 诚实约束：设计稿 S17 的「同步方向 / 同步范围 / 冲突处理 / 挂载开关」在后端仅实现
+ * 了「.dsh/storages 双向 + 冲突保留双份」，这些控件按布局渲染但置灰标注「暂未接入」，
+ * 不编假、不参与保存。地址/端口/共享目录(SMB·SFTP)/账号/密码 走真实连接与保存。
  */
 @Composable
 fun S52NasAdd(
@@ -324,8 +381,12 @@ fun S52NasAdd(
     var status by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
 
+    val typeOf: (Int) -> String = { p -> when (p) { 1 -> "smb"; 2 -> "sftp"; else -> "webdav" } }
+    val defaultPort: (Int) -> String = { p -> when (p) { 1 -> "445"; 2 -> "22"; else -> "5005" } }
     val webdavOnly = proto == 0
-    val canTest = !busy && webdavOnly && addr.isNotBlank() && user.isNotBlank()
+    // SMB 必须填共享目录才能连接；其余协议只需地址+账号
+    val canTest = !busy && addr.isNotBlank() && user.isNotBlank()
+        && (proto != 1 || shareDir.isNotBlank())
 
     DshScreen(modifier) {
         DshNavBar(onBack = onBack, title = "添加 NAS 连接", stacked = true)
@@ -337,16 +398,12 @@ fun S52NasAdd(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = Space.lg),
         ) {
-            // —— 连接类型 seg（S17）——
-            FieldLabelRow("连接类型") {
-                if (!webdavOnly) DshChip("该协议暂未接入", tone = ChipTone.Warn, mini = true)
-            }
+            // —— 连接类型 seg（S17，三种协议均真实可用）——
+            FieldLabelRow("连接类型")
             DshSeg(listOf("WebDAV", "SMB", "SFTP"), proto) {
                 proto = it
-                if (it != 0) {
-                    status = "该协议暂未接入，当前版本仅支持 WebDAV"
-                    statusOk = false
-                }
+                port = defaultPort(it)
+                status = null
             }
 
             Spacer(Modifier.height(14.dp))
@@ -362,19 +419,25 @@ fun S52NasAdd(
 
             Spacer(Modifier.height(14.dp))
 
-            // —— 共享目录 + 本地挂载点（S17 成对，暂未接入）——
-            FieldLabelRow("共享目录 / 本地挂载点") {
-                DshChip("暂未接入", tone = ChipTone.Warn, mini = true)
+            // —— 共享目录（SMB/SFTP 真实；WebDAV 暂未接入）——
+            FieldLabelRow("共享目录") {
+                if (webdavOnly) DshChip("暂未接入", tone = ChipTone.Warn, mini = true)
             }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.alpha(0.55f),
-            ) {
-                NasField("共享目录", shareDir, { shareDir = it }, modifier = Modifier.weight(1f), mono = true,
-                    placeholder = "/vault/dsh-sync")
-                NasField("本地挂载点", mountPoint, { mountPoint = it }, modifier = Modifier.weight(1f), mono = true,
-                    placeholder = "~/dsh/nas-mount")
-            }
+            // 本地挂载点：本 App 不把 NAS 挂成本地目录（Android 限制），仅做同步，故始终标注暂未接入
+            NasField(
+                "共享目录 / 远端基础路径", shareDir,
+                { shareDir = it },
+                modifier = if (webdavOnly) Modifier.alpha(0.55f).fillMaxWidth() else Modifier.fillMaxWidth(),
+                mono = true,
+                placeholder = if (webdavOnly) "/vault/dsh-sync" else "dsh（SMB 共享名 / SFTP 远端目录）",
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (webdavOnly) "WebDAV 同步固定作用于 .dsh/storages，共享目录暂未接入。"
+                else "共享目录即远端根：同步内容落在 <共享目录>/dsh-phone/storages。",
+                style = Type.meta, color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             Spacer(Modifier.height(14.dp))
 
@@ -479,15 +542,21 @@ fun S52NasAdd(
                     onClick = {
                         busy = true; status = "连接测试中…"
                         scope.launch(Dispatchers.IO) {
-                            val u = buildUrl(addr, port)
-                            val ok = DshSync.testConnection(ctx, u, user, if (pass.isBlank()) null else pass)
+                            val t = typeOf(proto)
+                            val ok = DshSync.testConnection(
+                                ctx, t, addr, port, shareDir, user, if (pass.isBlank()) null else pass)
                             if (ok) {
-                                DshSync.configure(ctx, u, user, if (pass.isBlank()) null else pass, 60)
-                                status = "连接成功，已保存 NAS 连接"
+                                DshSync.configure(
+                                    ctx, t, addr, port, shareDir, user, if (pass.isBlank()) null else pass, 60)
+                                status = "连接成功，已保存 NAS 连接（$t）"
                                 statusOk = true
                                 onSaved()
                             } else {
-                                status = "连接失败：检查地址 / 账号密码 / 是否开启 WebDAV"
+                                status = when (proto) {
+                                    1 -> "连接失败：检查地址 / 共享目录 / 账号密码 / 是否开启 SMB"
+                                    2 -> "连接失败：检查地址 / 账号密码 / 是否开启 SFTP(SSH)"
+                                    else -> "连接失败：检查地址 / 账号密码 / 是否开启 WebDAV"
+                                }
                                 statusOk = false
                                 busy = false
                             }
@@ -610,19 +679,14 @@ private fun NasField(
 
 // ============================ 私有工具 ============================
 
-/** 从 WebDAV URL 取主机标识（设计稿设备名由后端发现，这里如实用主机替代）。 */
+/** 从连接串取主机标识（WebDAV/SMB/SFTP 通用）。 */
 private fun hostOf(u: String): String {
-    var s = u.trim().replaceFirst("(?i)^https?://".toRegex(), "")
+    var s = u.trim().replaceFirst("(?i)^(https?|smb|sftp)://".toRegex(), "")
     val slash = s.indexOf('/')
     if (slash >= 0) s = s.substring(0, slash)
+    val at = s.lastIndexOf('@')
+    if (at >= 0) s = s.substring(at + 1)
     return s.ifBlank { "NAS" }
-}
-
-/** 拼出 http://host:port（端口空则不带）。 */
-private fun buildUrl(addr: String, port: String): String {
-    val a = addr.trim().trimEnd('/')
-    val p = port.trim()
-    return if (p.isEmpty()) "http://$a" else "http://$a:$p"
 }
 
 /** 解析 lastResultJson 的上次同步时间，无数据返回 null。 */

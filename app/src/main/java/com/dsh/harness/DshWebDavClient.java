@@ -36,7 +36,7 @@ import java.util.Locale;
  *   所以**不建议把 WebDAV 端口暴露到公网**。
  * - 凭证存在SharedPreferences（见 {@link DshSync}），不写日志。
  */
-final class DshWebDavClient {
+final class DshWebDavClient implements DshSync.NasTransport {
 
     private static final String TAG = "DshWebDavClient";
 
@@ -100,7 +100,8 @@ final class DshWebDavClient {
     }
 
     /** 创建目录（已存在时服务端返回 405，视为成功）。 */
-    boolean mkdirs(String relPath) {
+    @Override
+    public boolean mkdirs(String relPath) {
         String acc = "";
         String[] parts = relPath.split("/");
         for (int i = 0; i < parts.length; i++) {
@@ -127,7 +128,8 @@ final class DshWebDavClient {
      *
      * @return true 表示服务端已接受（201/204/200）
      */
-    boolean put(String relPath, File local) {
+    @Override
+    public boolean put(String relPath, File local) {
         if (!local.isFile()) return false;
         HttpURLConnection c = null;
         InputStream in = null;
@@ -156,7 +158,8 @@ final class DshWebDavClient {
     }
 
     /** 下载远端文件到本地；本地已存在则覆盖。 */
-    boolean get(String relPath, File dest) {
+    @Override
+    public boolean get(String relPath, File dest) {
         HttpURLConnection c = null;
         InputStream in = null;
         OutputStream out = null;
@@ -192,7 +195,8 @@ final class DshWebDavClient {
      *
      * @return 文件名集合；失败返回空集合
      */
-    java.util.Set<String> list(String relPath) {
+    @Override
+    public java.util.Set<String> list(String relPath) {
         java.util.Set<String> names = new java.util.LinkedHashSet<>();
         HttpURLConnection c = null;
         InputStream in = null;
@@ -256,7 +260,8 @@ final class DshWebDavClient {
      *
      * @return 毫秒时间戳；取不到返回 0（调用方须把 0 视为"未知"，据此放弃覆盖）
      */
-    long lastModified(String relPath) {
+    @Override
+    public long lastModified(String relPath) {
         HttpURLConnection c = null;
         try {
             c = open("HEAD", encodePath(relPath));
@@ -284,7 +289,8 @@ final class DshWebDavClient {
     }
 
     /** 连通性探测（PROPFIND Depth:0）。用于设置页「测试连接」。 */
-    boolean ping() {
+    @Override
+    public boolean ping() {
         HttpURLConnection c = null;
         try {
             c = open("PROPFIND", "/");
@@ -305,6 +311,10 @@ final class DshWebDavClient {
             if (c != null) c.disconnect();
         }
     }
+
+    /** 释放底层连接（WebDAV 每请求自管连接，这里为空实现，仅满足接口契约）。 */
+    @Override
+    public void close() { }
 
     // ---- 小工具 ----
     private static String trimSlash(String s) {

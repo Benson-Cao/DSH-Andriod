@@ -769,6 +769,9 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     visible = true,
                     onDismiss = { sheet = SheetKind.None },
                     onAddLocal = { sheet = SheetKind.None },
+                    currentWorkspace = workspace,
+                    nasConfigured = com.dsh.harness.DshSync.isConfigured(ctx),
+                    onNas = { nav.go(Route.S51NasSync) },
                 )
 
                 SheetKind.NewSession -> S9NewSessionSheet(
@@ -878,6 +881,11 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         mentionOpen = false
                         // 选中会话 → 把「@标题 」追加到输入框（保留已输入的指令前缀）
                         homeInput = homeInput.trimEnd() + "@" + s.title + " "
+                    },
+                    onPickFile = { path ->
+                        mentionOpen = false
+                        // 选中本机文件 → 复制到本地后把「@<本地路径> 」追加到输入框
+                        homeInput = homeInput.trimEnd() + "@" + path + " "
                     },
                 )
             }

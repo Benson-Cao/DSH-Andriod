@@ -26,8 +26,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * S3 会话首页 · 对齐 Web 端（v15 重排）+ S28 未选工作区态（v16 新增）
@@ -417,6 +426,9 @@ fun BoxScope.S3WorkspaceSheet(
     visible: Boolean,
     onDismiss: () -> Unit,
     onAddLocal: () -> Unit,
+    currentWorkspace: String? = null,
+    nasConfigured: Boolean = false,
+    onNas: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     DshSheet(
@@ -431,6 +443,8 @@ fun BoxScope.S3WorkspaceSheet(
             )
         },
         content = {
+            // —— 当前工作区（真实，来自 ViewModel；不再编造假项目行）——
+            DshSecTitle("当前工作区")
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -438,92 +452,74 @@ fun BoxScope.S3WorkspaceSheet(
                     .background(c.card)
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
             ) {
-                DshMRow(
-                    title = "默认工作区",
-                    subtitle = "~/dsh/default · 4 个会话",
-                    icon = DshIcons.HomeWork,
-                    trailing = {
-                        Icon(DshIcons.Check, "已选", Modifier.size(19.dp), tint = c.brand)
-                    },
-                )
-                DshDivider()
-                DshMRow(
-                    title = "数据分析项目",
-                    subtitle = "~/Projects/data · 12 个会话",
-                    icon = DshIcons.Folder,
-                    iconTone = ChipTone.Neutral,
-                    chevron = true,
-                )
-                DshDivider()
-                DshMRow(
-                    title = "DSH 插件开发",
-                    subtitle = "~/dev/dsh-plugins · 暂无会话",
-                    icon = DshIcons.Power,
-                    iconTone = ChipTone.Purple,
-                    chevron = true,
-                )
+                if (currentWorkspace.isNullOrBlank()) {
+                    Text(
+                        "尚未选择工作区 · 去左上角侧栏开一个",
+                        style = Type.sec,
+                        color = c.ink3,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+                    )
+                } else {
+                    DshMRow(
+                        title = currentWorkspace.substringAfterLast('/'),
+                        subtitle = "当前已选工作区",
+                        icon = DshIcons.HomeWork,
+                        trailing = {
+                            Icon(DshIcons.Check, "已选", Modifier.size(19.dp), tint = c.brand)
+                        },
+                    )
+                }
             }
 
-            DshSecTitle("NAS 来源", note = "群晖 DS920+ · WebDAV")
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-            ) {
-                DshMRow(
-                    title = "vault/dsh-sync",
-                    subtitle = "↔ ~/dsh/nas-mount · 已挂载",
-                    icon = DshIcons.Cloud,
-                    iconTone = ChipTone.Purple,
-                    trailing = {
-                        DshChip("选为工作区", tone = ChipTone.Brand, mini = true)
-                    },
-                )
-                DshDivider()
-                DshMRow(
-                    title = "backup/charts",
-                    subtitle = "仅上传映射 · 不能作写入目标",
-                    icon = DshIcons.CloudDone,
-                    iconTone = ChipTone.Neutral,
-                    chevron = true,
-                )
+            // —— NAS 备份目标（真实状态；仅作备份目标，不作工作区来源）——
+            if (nasConfigured) {
+                Spacer(Modifier.height(14.dp))
+                DshSecTitle("NAS 备份目标")
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
+                ) {
+                    DshMRow(
+                        title = "NAS 已连接",
+                        subtitle = "仅作会话/工作区数据备份目标",
+                        icon = DshIcons.Cloud,
+                        iconTone = ChipTone.Ok,
+                        trailing = { DshChip("已连接", tone = ChipTone.Ok, mini = true) },
+                        onClick = onNas,
+                    )
+                }
             }
 
-            // —— 边界警告：琥珀色 info ——
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Icon(
-                    DshIcons.ErrorOutline, null,
-                    Modifier.size(13.dp).padding(top = 1.dp),
-                    tint = c.warn,
-                )
-                Text(
-                    "NAS 目录作工作区后边界不变：仍只在该挂载目录内读写；挂载掉线自动转只读，写入类操作禁用（见 S18）",
-                    style = Type.meta.copy(lineHeight = 17.6.sp),
-                    color = c.ink3,
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
+            // —— 添加本地文件夹（走 S41 真实目录选择）——
+            Spacer(Modifier.height(14.dp))
             DshBtn(
                 text = "添加本地文件夹",
                 icon = DshIcons.CreateNewFolder,
                 tone = BtnTone.Ghost,
                 onClick = onAddLocal,
             )
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "网页版必须选定工作区才能干活：选中后输入框才可用，所有读写与命令只在目录内执行。",
-                style = Type.meta.copy(lineHeight = 18.4.sp),
-                color = c.ink3,
-            )
+
+            // —— 边界说明（诚实，不编假）——
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Icon(
+                    DshIcons.Info, null,
+                    Modifier.size(13.dp).padding(top = 1.dp),
+                    tint = c.ink3,
+                )
+                Text(
+                    "NAS 仅作会话/工作区数据的备份目标，不作工作区来源；挂载掉线时自动跳过同步，不影响本地使用。",
+                    style = Type.meta.copy(lineHeight = 17.6.sp),
+                    color = c.ink3,
+                )
+            }
         },
     )
 }
@@ -704,8 +700,31 @@ fun BoxScope.S3MentionSheet(
     onDismiss: () -> Unit,
     sessions: List<com.dsh.harness.mobile.data.DshViewModel.Session> = emptyList(),
     onPickSession: (com.dsh.harness.mobile.data.DshViewModel.Session) -> Unit = {},
+    onPickFile: (String) -> Unit = {},
 ) {
     val c = DshTheme.colors
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var pickedName by remember { mutableStateOf<String?>(null) }
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val name = queryDisplayName(ctx, uri) ?: ("file_" + System.currentTimeMillis())
+                    val dir = File(ctx.getExternalFilesDir(null), "dsh-attachments")
+                    dir.mkdirs()
+                    val dest = File(dir, System.currentTimeMillis().toString() + "_" + name)
+                    ctx.contentResolver.openInputStream(uri)?.use { ins ->
+                        FileOutputStream(dest).use { outs -> ins.copyTo(outs) }
+                    }
+                    pickedName = name
+                    onPickFile(dest.absolutePath)
+                } catch (e: Throwable) {
+                    pickedName = null
+                }
+            }
+        }
+    }
     DshSheet(
         visible = visible,
         onDismiss = onDismiss,
@@ -749,10 +768,48 @@ fun BoxScope.S3MentionSheet(
             }
 
             DshSecTitle("文件")
-            DshEmpty(
-                "本机文件索引未接入 · 当前只能提及会话",
-                icon = DshIcons.InsertDriveFile,
-            )
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(c.card)
+                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                    .padding(14.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    Icon(DshIcons.InsertDriveFile, null, Modifier.size(17.dp), tint = c.brand)
+                    Column(Modifier.weight(1f)) {
+                        Text("从本机选择文件", style = Type.rowTitle, color = c.ink)
+                        Text("选中的文件会复制到本地，并以 @ 引用随消息提交", style = Type.sec, color = c.ink3)
+                    }
+                    DshBtn(
+                        "选择", icon = DshIcons.FolderOpen, small = true, tone = BtnTone.Ghost,
+                        onClick = { pickFile.launch(arrayOf("*/*")) },
+                    )
+                }
+                if (pickedName != null) {
+                    Spacer(Modifier.height(10.dp))
+                    DshDivider()
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        Icon(DshIcons.Check, null, Modifier.size(15.dp), tint = c.ok)
+                        Text(
+                            "已选择：$pickedName",
+                            style = Type.sec, color = c.ink2,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
 
             Text(
                 "输入 @ 弹出本面板；选中会话会把「@会话标题」写回输入框，发送时随消息一起提交。",
@@ -812,6 +869,21 @@ private fun MentionSessionRow(
             modifier = Modifier.size(16.dp),
             tint = c.ink3,
         )
+    }
+}
+
+/** 从 SAF 返回的 Uri 取文件显示名（用于 @ 引用时的展示）。 */
+private fun queryDisplayName(ctx: android.content.Context, uri: Uri): String? {
+    return try {
+        val cur = ctx.contentResolver.query(uri, null, null, null, null)
+        cur?.use {
+            if (it.moveToFirst()) {
+                val i = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (i >= 0) it.getString(i) else null
+            } else null
+        }
+    } catch (_: Throwable) {
+        null
     }
 }
 

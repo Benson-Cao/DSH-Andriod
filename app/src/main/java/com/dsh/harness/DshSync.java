@@ -11,7 +11,17 @@ import java.util.Date;
 import java.util.Locale;
 
 /**
- * 把 dsh 的**会话/工作区数据**同步到 NAS（飞牛 fnOS 的 WebDAV）。
+ * 把 dsh 的**会话/工作区数据**同步到 NAS。
+ *
+ * ## 支持的传输协议
+ *
+ * - WebDAV：飞牛 fnOS 的 WebDAV（{@link DshWebDavClient}，纯 JDK，零第三方库）。
+ * - SFTP：基于 SSH 的文件传输（{@link DshSftpClient}，依赖 JSch）。
+ * - SMB：Windows/NAS 的 SMB/CIFS 共享（{@link DshSmbClient}，依赖 jcifs-ng）。
+ *
+ * 三者共用同一套同步与冲突策略，只是「传输层」不同。选择哪种协议由
+ * {@code type} 配置字段决定，{@link #createTransport} 据此返回对应的
+ * {@link NasTransport} 实现。
  *
  * ## 同步什么、不同步什么（这是本类最重要的设计约束）
  *
@@ -35,16 +45,32 @@ import java.util.Locale;
  *
  * Android 应用无法把网络文件系统挂成普通目录（需 root；SAF 不支持 SMB/NFS），
  * 详见 {@code docs/nas-sync-feasibility.md}。所以数据留本地，只同步选定文件。
- *
- * @see DshWebDavClient
  */
 public final class DshSync {
 
     private static final String TAG = "DshSync";
     private static final String PREFS = "dsh_sync";
 
-    /** 远端根目录（对应 NAS 上给 dsh 用的文件夹）。 */
-    private static final String REMOTE_ROOT = "dsh-phone/storages";
+    /** 传输层接口：三种协议（WebDAV / SFTP / SMB）共用同一组动作。 */
+    public interface NasTransport {
+        /** 连通性 + 鉴权探测。能连且凭证正确返回 true。永不抛异常。 */
+        boolean ping();
+        /** 递归创建远端目录（已存在视为成功）。 */
+        boolean mkdirs(String relPath);
+        /** 上传本地文件到远端 relPath。 */
+        boolean put(String relPath, File local);
+        /** 下载远端 relPath 到本地 dest（覆盖）。 */
+        boolean get(String relPath, File dest);
+        /** 列出远端某目录的直接子项文件名（不含路径）。失败返回空集合。 */
+        java.util.Set<String> list(String relPath);
+        /** 远端文件最后修改时间（毫秒）；取不到返回 0（调用方据此放弃覆盖）。 */
+        long lastModified(String relPath);
+        /** 释放底层连接。 */
+        void close();
+    }
+
+    /** 远端根目录（相对各协议的基础连接，如 <share>/dsh-phone/storages）。 */
+    static final String REMOTE_ROOT = "dsh-phone/storages";
     /** 本地源目录（相对 DshBootstrap.home()）。 */
     private static final String LOCAL_REL = ".dsh/storages";
     /** 冲突副本后缀。 */
@@ -63,8 +89,6 @@ public final class DshSync {
     private DshSync() {}
 
     // ================= 最近一次结果（跨线程共享）=================
-    // 同步跑在后台线程、UI 在主线程读，所以必须 volatile；
-    // 只保留"最近一次"——历史同步记录对用户没有价值，存着只会占内存。
     private static volatile String sLastResultJson = "{}";
 
     /** 最近一次同步结果的 JSON，供 {@code DshSafBridge.syncLastResult()} 返回。 */
@@ -91,43 +115,162 @@ public final class DshSync {
         return ctx.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    public static boolean isConfigured(Context ctx) {
+    /**
+     * 旧版本把连接信息存成单个 {@code url}（仅 WebDAV）。新版本拆成
+     * type/host/port/share。这里做一次迁移，保证已存的 WebDAV 连接不丢。
+     */
+    private static void migrateIfNeeded(Context ctx) {
         SharedPreferences p = prefs(ctx);
-        return p.getString("url", "").trim().length() > 0
+        if (!p.getString("host", "").isEmpty()) return;          // 已迁移
+        String u = p.getString("url", "");
+        String us = p.getString("user", "");
+        if (u.isEmpty() || us.isEmpty()) return;
+        StringBuilder h = new StringBuilder(), po = new StringBuilder(), sh = new StringBuilder();
+        parseUrl(u, h, po, sh);
+        String type = u.startsWith("smb://") ? "smb" : (u.startsWith("sftp://") ? "sftp" : "webdav");
+        p.edit()
+            .putString("type", type)
+            .putString("host", h.toString())
+            .putString("port", po.toString())
+            .putString("share", sh.toString())
+            .apply();
+    }
+
+    /** 把 http(s)://host:port/path 拆成 host / port / share(含前导/)。 */
+    private static void parseUrl(String url, StringBuilder host, StringBuilder port, StringBuilder share) {
+        String s = url == null ? "" : url.trim();
+        int sc = s.indexOf("://");
+        String rest = sc >= 0 ? s.substring(sc + 3) : s;
+        int slash = rest.indexOf('/');
+        String auth = slash >= 0 ? rest.substring(0, slash) : rest;
+        String sh = slash >= 0 ? rest.substring(slash) : "";
+        int at = auth.lastIndexOf('@');
+        if (at >= 0) auth = auth.substring(at + 1);              // 去掉 user:pass@
+        int colon = auth.lastIndexOf(':');
+        if (colon >= 0) {
+            host.append(auth.substring(0, colon));
+            port.append(auth.substring(colon + 1));
+        } else {
+            host.append(auth);
+        }
+        share.append(sh);
+    }
+
+    /** 由 type/host/port/share 拼出给用户看的连接串（也写回 url 字段）。 */
+    static String displayUrl(String type, String host, String port, String share) {
+        String h;
+        if ("smb".equals(type)) h = "smb://" + host;
+        else if ("sftp".equals(type)) h = "sftp://" + host;
+        else h = "http://" + host;
+        if (port != null && !port.isEmpty()) h += ":" + port;
+        if (share != null && !share.isEmpty()) {
+            if (!share.startsWith("/")) h += "/";
+            h += share;
+        }
+        return h;
+    }
+
+    public static boolean isConfigured(Context ctx) {
+        migrateIfNeeded(ctx);
+        SharedPreferences p = prefs(ctx);
+        return p.getString("host", "").trim().length() > 0
             && p.getString("user", "").trim().length() > 0;
     }
 
-    public static void configure(Context ctx, String url, String user, String pass, int intervalSec) {
-        // pass == null 表示「保留原密码」（设置页密码留空时用于不覆盖已存凭据）
+    /** 新签名：按协议保存完整连接配置。pass == null 表示「保留原密码」。 */
+    public static void configure(Context ctx, String type, String host, String port,
+                                 String share, String user, String pass, int intervalSec) {
         SharedPreferences.Editor e = prefs(ctx).edit()
-            .putString("url", url == null ? "" : url.trim())
+            .putString("type", type == null ? "webdav" : type.trim())
+            .putString("host", host == null ? "" : host.trim())
+            .putString("port", port == null ? "" : port.trim())
+            .putString("share", share == null ? "" : share.trim())
             .putString("user", user == null ? "" : user.trim())
+            .putString("url", displayUrl(type, host, port, share))
             .putInt("interval", intervalSec < 30 ? 30 : intervalSec);
         if (pass != null) e.putString("pass", pass);
         e.apply();
-        Log.i(TAG, "同步配置已更新：url=" + url + " interval=" + intervalSec + "s");
+        Log.i(TAG, "同步配置已更新：type=" + type + " host=" + host + " interval=" + intervalSec + "s");
+    }
+
+    /** 旧签名（WebDAV 兼容，SAF 桥仍在用）：从 url 解析成 host/port 后走新逻辑。 */
+    public static void configure(Context ctx, String url, String user, String pass, int intervalSec) {
+        migrateIfNeeded(ctx);
+        StringBuilder h = new StringBuilder(), po = new StringBuilder(), sh = new StringBuilder();
+        parseUrl(url, h, po, sh);
+        String type = url.startsWith("smb://") ? "smb" : (url.startsWith("sftp://") ? "sftp" : "webdav");
+        configure(ctx, type, h.toString(), po.toString(), sh.toString(), user, pass, intervalSec);
     }
 
     public static int intervalSec(Context ctx) {
         return prefs(ctx).getInt("interval", 60);
     }
 
-    public static String url(Context ctx)   { return prefs(ctx).getString("url", ""); }
-    public static String user(Context ctx)  { return prefs(ctx).getString("user", ""); }
+    public static String type(Context ctx) {
+        migrateIfNeeded(ctx);
+        String t = prefs(ctx).getString("type", "webdav");
+        return t == null || t.isEmpty() ? "webdav" : t;
+    }
+
+    public static String host(Context ctx) {
+        migrateIfNeeded(ctx);
+        return prefs(ctx).getString("host", "");
+    }
+
+    public static String port(Context ctx) {
+        migrateIfNeeded(ctx);
+        return prefs(ctx).getString("port", "");
+    }
+
+    public static String share(Context ctx) {
+        migrateIfNeeded(ctx);
+        return prefs(ctx).getString("share", "");
+    }
+
+    public static String user(Context ctx) {
+        return prefs(ctx).getString("user", "");
+    }
+
+    /** 给用户看的连接串（含协议）。 */
+    public static String url(Context ctx) {
+        migrateIfNeeded(ctx);
+        String stored = prefs(ctx).getString("url", "");
+        if (!stored.isEmpty()) return stored;
+        return displayUrl(type(ctx), host(ctx), port(ctx), share(ctx));
+    }
 
     /** 连通性测试（设置页「测试连接」）。不落盘；pass 为 null 时用已存密码。 */
+    public static boolean testConnection(Context ctx, String type, String host, String port,
+                                         String share, String user, String pass) {
+        if (host == null || host.trim().isEmpty()) return false;
+        if (user == null || user.trim().isEmpty()) return false;
+        NasTransport t = createTransport(
+            type, host.trim(), port == null ? "" : port.trim(),
+            share == null ? "" : share.trim(), user.trim(),
+            pass == null ? prefs(ctx).getString("pass", "") : pass);
+        try {
+            return t.ping();
+        } catch (Throwable e) {
+            Log.w(TAG, "testConnection 异常", e);
+            return false;
+        } finally {
+            try { t.close(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 旧签名（S51 沿用）：从 url 解析协议后走新逻辑。 */
     public static boolean testConnection(Context ctx, String url, String user, String pass) {
-        String u = url == null ? "" : url.trim();
-        String us = user == null ? "" : user.trim();
-        if (u.length() == 0 || us.length() == 0) return false;
-        String p = pass == null ? prefs(ctx).getString("pass", "") : pass;
-        return new DshWebDavClient(u, us, p).ping();
+        StringBuilder h = new StringBuilder(), po = new StringBuilder(), sh = new StringBuilder();
+        parseUrl(url, h, po, sh);
+        String type = url.startsWith("smb://") ? "smb" : (url.startsWith("sftp://") ? "sftp" : "webdav");
+        return testConnection(ctx, type, h.toString(), po.toString(), sh.toString(), user, pass);
     }
 
     /** 清除 NAS 同步配置（凭据一并删除）。设置页「断开」按钮调用。 */
     public static void clear(Context ctx) {
         prefs(ctx).edit()
             .remove("url").remove("user").remove("pass").remove("interval")
+            .remove("type").remove("host").remove("port").remove("share")
             .apply();
         Log.i(TAG, "同步配置已清除");
     }
@@ -138,25 +281,45 @@ public final class DshSync {
     static String deviceTag() {
         String m = Build.MODEL == null ? "" : Build.MODEL.trim();
         if (m.length() == 0) return "dev";
-        // 去掉空格与斜杠，避免文件名问题
         String s = m.replaceAll("[\\s/\\\\]+", "-");
         return s.length() > 20 ? s.substring(0, 20) : s;
+    }
+
+    // ================= 传输工厂 =================
+
+    /** 用当前已存配置创建传输实例。 */
+    static NasTransport createTransport(Context ctx) {
+        SharedPreferences p = prefs(ctx);
+        return createTransport(
+            p.getString("type", "webdav"),
+            p.getString("host", ""),
+            p.getString("port", ""),
+            p.getString("share", ""),
+            p.getString("user", ""),
+            p.getString("pass", ""));
+    }
+
+    /** 用给定参数创建传输实例（按协议分派实现）。 */
+    static NasTransport createTransport(String type, String host, String port,
+                                       String share, String user, String pass) {
+        if ("smb".equals(type)) return new DshSmbClient(host, port, share, user, pass);
+        if ("sftp".equals(type)) return new DshSftpClient(host, port, share, user, pass);
+        // 默认 WebDAV：host/port 拼成 http://host:port
+        String u = "http://" + (host == null ? "" : host)
+            + (port == null || port.isEmpty() ? "" : ":" + port);
+        return new DshWebDavClient(u, user, pass);
     }
 
     // ================= 同步主流程 =================
 
     /**
      * 执行一次同步。**必须在后台线程调用**（会做网络 IO）。
-     *
-     * <p>设计为「永不抛异常」：NAS 掉线/凭证错误都只体现在 {@link Result#message}，
-     * 绝不让同步异常波及dsh 的启动与保活流程。
      */
     public static Result syncOnce(Context ctx) {
         Result r;
         try {
             r = syncOnceInner(ctx);
         } catch (Throwable t) {
-            // 最外层兜底：syncOnce 内层已经try 过，但万一有遗漏也不能抛给调用方
             r = new Result();
             r.message = "同步异常: " + t.getClass().getSimpleName();
             Log.w(TAG, "syncOnce 外层兜底", t);
@@ -168,10 +331,10 @@ public final class DshSync {
     private static Result syncOnceInner(Context ctx) {
         Result r = new Result();
         SharedPreferences p = prefs(ctx);
-        String url = p.getString("url", "").trim();
+        String host = p.getString("host", "").trim();
         String user = p.getString("user", "").trim();
         String pass = p.getString("pass", "");
-        if (url.length() == 0 || user.length() == 0) {
+        if (host.length() == 0 || user.length() == 0) {
             r.message = "未配置";
             return r;
         }
@@ -189,20 +352,20 @@ public final class DshSync {
             return r;
         }
 
-        DshWebDavClient dav = new DshWebDavClient(url, user, pass);
+        NasTransport tx = createTransport(ctx);
         try {
-            if (!dav.ping()) {
-                r.message = "无法连接 NAS（检查地址/凭证/是否开启 WebDAV）";
+            if (!tx.ping()) {
+                r.message = "无法连接 NAS（检查地址/凭证/是否开启对应服务）";
                 return r;
             }
-            if (!dav.mkdirs(REMOTE_ROOT)) {
-                r.message = "无法创建远端目录（检查团队文件夹是否允许协议挂载）";
+            if (!tx.mkdirs(REMOTE_ROOT)) {
+                r.message = "无法创建远端目录（检查共享目录权限）";
                 return r;
             }
 
             String stampKey = "lastSync_" + REMOTE_ROOT;
             long lastSync = p.getLong(stampKey, 0L);
-            java.util.Set<String> remoteNames = dav.list(REMOTE_ROOT);
+            java.util.Set<String> remoteNames = tx.list(REMOTE_ROOT);
 
             // ---- 1) 上传：本地比上次同步新、或远端没有 ----
             for (File f : localFiles) {
@@ -212,13 +375,9 @@ public final class DshSync {
                 boolean remoteExists = remoteNames.contains(f.getName());
                 boolean changed = f.lastModified() > lastSync;
                 if (!changed && !remoteExists) continue;
-                if (!changed && remoteExists) {
-                    // 远端有且本地没更新 —— 交给下载分支处理
-                    continue;
-                }
-                if (dav.put(remotePath, f)) {
+                if (!changed && remoteExists) continue;               // 交给下载分支
+                if (tx.put(remotePath, f)) {
                     r.uploaded++;
-                    // 记住已上传，避免下次重复 PUT
                     p.edit().putLong("synced_" + remotePath, f.lastModified()).apply();
                 } else {
                     r.message = "上传失败: " + f.getName();
@@ -230,18 +389,17 @@ public final class DshSync {
                 if (name.contains(CONFLICT_MARK)) continue;
                 File local = new File(localDir, name);
                 String remotePath = REMOTE_ROOT + "/" + name;
-                long remoteStamp = dav.lastModified(remotePath);   // 0 =取不到
+                long remoteStamp = tx.lastModified(remotePath);   // 0 =取不到
                 boolean localExists = local.isFile();
 
                 if (!localExists) {
-                    if (dav.get(remotePath, local)) {
+                    if (tx.get(remotePath, local)) {
                         r.downloaded++;
                         Log.i(TAG, "从 NAS 拉取: " + name);
                     }
                     continue;
                 }
-                // 远端取不到 mtime 时不冒险覆盖（宁可不同步，也别丢数据）
-                if (remoteStamp <= 0) continue;
+                if (remoteStamp <= 0) continue;                  // 取不到 mtime 不冒险覆盖
                 boolean remoteNewer = remoteStamp > lastSync;
                 boolean localChanged = local.lastModified() > lastSync;
                 if (!remoteNewer) continue;
@@ -251,10 +409,9 @@ public final class DshSync {
                     File kept = keepConflictCopy(local);
                     if (kept != null) r.conflicts++;
                     Log.w(TAG, "检测到冲突（本地与 NAS 都改过），已保留双份: " + name);
-                    // 冲突副本留本地不上传（避免污染 NAS），把远端版本拉下来
-                    if (dav.get(remotePath, local)) r.downloaded++;
+                    if (tx.get(remotePath, local)) r.downloaded++;
                 } else {
-                    if (dav.get(remotePath, local)) r.downloaded++;
+                    if (tx.get(remotePath, local)) r.downloaded++;
                 }
             }
 
@@ -263,18 +420,16 @@ public final class DshSync {
                     + " 冲突" + r.conflicts);
             if ("".equals(r.message)) r.message = "ok";
         } catch (Throwable t) {
-            // 兜底：同步绝不能把异常抛给调用方
             r.message = "同步异常: " + t.getClass().getSimpleName();
             Log.w(TAG, "同步异常", t);
+        } finally {
+            try { tx.close(); } catch (Throwable ignored) { }
         }
         return r;
     }
 
     /**
      * 把本地文件另存为冲突副本，返回新文件。
-     *
-     * <p>命名：{@code <原名去扩展>.conflict-<设备>-<yyyyMMdd-HHmmss>.<扩展>}
-     * 例：{@code workspace.conflict-Pixel-7-20261013-134512.json}
      */
     static File keepConflictCopy(File src) {
         try {

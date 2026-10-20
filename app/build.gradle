@@ -54,13 +54,17 @@ android {
 
         implementation project(":terminal-view")
         implementation project(":termux-shared")
+
+        // ---- NAS 同步：SMB / SFTP 传输实现（S52 可实测连接）----
+        implementation 'com.jcraft:jsch:0.1.55'             // SFTP（纯 Java SSH）
+        implementation 'eu.agno3.jcifs:jcifs-ng:2.1.10'    // SMB/CIFS（含 slf4j/bcprov 传递依赖）
     }
 
     defaultConfig {
         applicationId "com.dsh.harness"
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
-        versionCode 1016
+        versionCode 1017
         versionName "1.0.0"
 
         if (appVersionName) versionName = appVersionName
