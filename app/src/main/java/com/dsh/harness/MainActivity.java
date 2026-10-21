@@ -38,7 +38,7 @@ import org.json.JSONObject;
  * 启动顺序（全部在后台线程，避免首启解压 735MB 导致 ANR / 黑屏）：
  *   1. DshBootstrap.setupIfNeeded() —— 首次解包 + 补符号链接 + 打补丁 + 生成启动脚本
  *   2. DshProcessManager.start()    —— 后台拉起 dsh Web 服务
- *   3. WebView 等待 3080 端口就绪后加载 http://127.0.0.1:3080
+ *   3. WebView 等待 3081 端口就绪后加载 http://127.0.0.1:3081
  *
  * 期间显示"正在启动"界面，而不是黑屏。
  */

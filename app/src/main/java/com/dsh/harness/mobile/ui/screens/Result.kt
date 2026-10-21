@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,11 +36,29 @@ import com.dsh.harness.mobile.ui.theme.*
 // ============================ S6 对话流 · 成果与迭代 ============================
 
 /**
+ * 产物条目（v30.8：S6 改为真实数据驱动，不再写死 "Q3数据汇总.pptx"）。
+ *
+ * @param name     文件名
+ * @param size     字节数（<=0 表示未知）
+ * @param mtime    最后修改时间戳（毫秒，<=0 表示未知）
+ * @param ext      扩展名（大写，不含点）；用于产物卡上的类型徽标
+ * @param absPath  绝对路径（可分享/可打开时非空；SAF 虚拟条目可能为空）
+ */
+data class S6Artifact(
+    val name: String,
+    val size: Long = 0L,
+    val mtime: Long = 0L,
+    val ext: String = "",
+    val absPath: String? = null,
+)
+
+/**
  * S6 成果屏
  * 布局：工作过程（默认折叠）4% ｜ 回答文本 10% ｜ 产物卡 24%(缩略 92px + 三按钮)
  *      ｜ 变更摘要 8% ｜ 建议 chips 8% ｜ 输入条 8%
  *   "产物卡不折叠，保持在首屏可见范围内"
  *   v7 修复：摘要文件名不再折行、按钮文案收短不再与相邻按钮打架。
+ *   v30.8：产物 / 变更 / 建议 chips 全部接真实数据与真实动作。
  */
 @Composable
 fun S6ChatResult(
@@ -54,6 +73,16 @@ fun S6ChatResult(
     /** v13 轨迹账本：对话/轨迹标签的「轨迹」态复用 */
     events: List<TrajectoryEvent> = emptyList(),
     onOpenTrajectory: () -> Unit = {},
+    /** v30.8：真实产物列表（来自工作区 / SAF 目录扫描）；空 = 还没有产物 */
+    artifacts: List<S6Artifact> = emptyList(),
+    /** v30.8：真实工作过程摘要（由工具调用归并而来）；null = 不渲染折叠块 */
+    processSummary: String? = null,
+    /** v30.8：真实变更摘要（写入工作区的文件数 / 名称）；null = 无变更 */
+    changeSummary: Pair<Int, String>? = null,
+    /** v30.8：继续迭代建议（点击即把该建议作为新提示词发出） */
+    suggestions: List<String> = emptyList(),
+    /** v30.8：发出新提示词（继续迭代 chip / 输入条发送） */
+    onSend: (String) -> Unit = {},
 ) {
     val c = DshTheme.colors
     // v13：顶部「对话 / 轨迹」并列标签
@@ -91,117 +120,151 @@ fun S6ChatResult(
             Spacer(Modifier.height(4.dp))
 
             // 工作过程默认折叠 —— v7 起不再默认展开
-            DshFold(
-                title = "工作过程 · 9 步 · 点开看明细",
-                detail = "read_file · sales_q3.xlsx\nbash · python aggregate.py\n" +
-                    "web_search · 2025 年同期口径\nwrite_file · charts/*.png ×9\n+4 步 · 展开见 S8 轨迹",
-                icon = null,
-                initiallyOpen = false,
-            )
+            // v30.8：内容来自真实工具调用归并（processSummary 为 null = 本轮没有工具调用）
+            if (processSummary != null) {
+                DshFold(
+                    title = "工作过程 · 点开看明细",
+                    detail = processSummary,
+                    icon = null,
+                    initiallyOpen = false,
+                )
+            }
 
             DshAnswerText(answer)
 
             // —— 产物卡：缩略 74×92 + 标题 + 元信息 + 三按钮 ——
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .padding(12.dp),
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // 缩略：设计稿 .thumb 74×92 渐变占位
-                    Column(
-                        Modifier
-                            .width(74.dp)
-                            .height(92.dp)
-                            .clip(RoundedCornerShape(Radius.md))
-                            .background(Brush.linearGradient(listOf(c.brand, c.purple))),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Icon(DshIcons.Slideshow, null, Modifier.size(24.dp), tint = Color.White)
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            "PPTX",
-                            style = Type.meta.copy(
-                                fontSize = 9.sp,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                letterSpacing = 0.5.sp,
-                            ),
-                            color = Color.White,
-                        )
+            // v30.8：真实产物列表（工作区 / SAF 扫描）。无产物时诚实空态，不写死示例文件。
+            val firstArt = artifacts.firstOrNull()
+            if (firstArt == null) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                        .padding(12.dp),
+                ) {
+                    Text(
+                        "还没有产物文件",
+                        style = Type.body.copy(fontSize = 14.5.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                        color = c.ink,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "本轮回答没有在工作区里写出文件。",
+                        style = Type.meta.copy(lineHeight = 18.4.sp),
+                        color = c.ink3,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        DshBtn("打开工作区", icon = DshIcons.FolderOpen, small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onOpenWorkspace)
+                    }
+                }
+            } else {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                        .padding(12.dp),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // 缩略：设计稿 .thumb 74×92 渐变占位；类型徽标取真实扩展名
+                        Column(
+                            Modifier
+                                .width(74.dp)
+                                .height(92.dp)
+                                .clip(RoundedCornerShape(Radius.md))
+                                .background(Brush.linearGradient(listOf(c.brand, c.purple))),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Icon(DshIcons.Slideshow, null, Modifier.size(24.dp), tint = Color.White)
+                            if (firstArt.ext.isNotEmpty()) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    firstArt.ext.take(6),
+                                    style = Type.meta.copy(
+                                        fontSize = 9.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        letterSpacing = 0.5.sp,
+                                    ),
+                                    color = Color.White,
+                                )
+                            }
+                        }
+
+                        Column(Modifier.weight(1f)) {
+                            // v7：文件名不再折行 —— maxLines=1 + ellipsis
+                            Text(
+                                firstArt.name,
+                                style = Type.body.copy(fontSize = 14.5.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                                color = c.ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                artifactMeta(firstArt),
+                                style = Type.meta.copy(lineHeight = 18.4.sp),
+                                color = c.ink3,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (firstArt.size > 0) DshChip(fmtArtSize(firstArt.size), mini = true)
+                                if (artifacts.size > 1) DshChip("共 ${artifacts.size} 个", icon = DshIcons.Image, mini = true)
+                            }
+                        }
                     }
 
+                    Spacer(Modifier.height(12.dp))
+                    // v7：三个按钮等分，文案收短，互不打架
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        DshBtn("预览", icon = DshIcons.Visibility, small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onPreview)
+                        DshBtn("打开", icon = DshIcons.FolderOpen, small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onOpenWorkspace)
+                        DshBtn("分享", icon = DshIcons.Share, small = true, modifier = Modifier.weight(1f), onClick = onShare)
+                    }
+                }
+            }
+
+            // —— 变更摘要（v30.8：真实计数，无变更不渲染）——
+            if (changeSummary != null) {
+                val (n, names) = changeSummary
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                        .clickable { onOpenWorkspace() }
+                        .padding(horizontal = 13.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(DshIcons.Difference, null, Modifier.size(18.dp), tint = c.purple)
+                    Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        // v7：文件名不再折行 —— maxLines=1 + ellipsis
-                        Text(
-                            "Q3数据汇总.pptx",
-                            style = Type.body.copy(fontSize = 14.5.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
-                            color = c.ink,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "9 页 · 1.4 MB · 16:9\n19:52 写入工作区",
-                            style = Type.meta.copy(lineHeight = 18.4.sp),
-                            color = c.ink3,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            DshChip("1280×720", mini = true)
-                            DshChip("9 图", icon = DshIcons.Image, mini = true)
+                        Text("工作区内修改 · $n 个文件", style = Type.rowTitle, color = c.ink, maxLines = 1)
+                        Text(names, style = Type.sec, color = c.ink3, maxLines = 1)
+                    }
+                    Icon(DshIcons.ChevronRight, null, Modifier.size(17.dp), tint = c.ink3)
+                }
+            }
+
+            // —— 继续迭代（v30.8：chip 点击 = 把建议作为新提示词发出）——
+            if (suggestions.isNotEmpty()) {
+                DshSecTitle("继续迭代", Modifier.padding(top = 0.dp))
+                suggestions.chunked(2).forEachIndexed { i, pair ->
+                    if (i > 0) Spacer(Modifier.height(7.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        pair.forEach { s ->
+                            DshChip(s, icon = DshIcons.AddChart, onClick = { onSend(s) })
                         }
                     }
                 }
-
-                Spacer(Modifier.height(12.dp))
-                // v7：三个按钮等分，文案收短，互不打架
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    DshBtn("预览", icon = DshIcons.Visibility, small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onPreview)
-                    DshBtn("打开", icon = DshIcons.FolderOpen, small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onOpenWorkspace)
-                    DshBtn("分享", icon = DshIcons.Share, small = true, modifier = Modifier.weight(1f), onClick = onShare)
-                }
-            }
-
-            // —— 变更摘要 ——
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .clickable { onOpenWorkspace() }
-                    .padding(horizontal = 13.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(DshIcons.Difference, null, Modifier.size(18.dp), tint = c.purple)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("工作区内修改 · 6 个文件", style = Type.rowTitle, color = c.ink, maxLines = 1)
-                    Text("aggregate.py 等 6 个文件已写入", style = Type.sec, color = c.ink3, maxLines = 1)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("+214", style = Type.sec.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = c.ok)
-                    Text("−38", style = Type.sec.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = c.danger)
-                }
-                Icon(DshIcons.ChevronRight, null, Modifier.size(17.dp), tint = c.ink3)
-            }
-
-            DshSecTitle("继续迭代", Modifier.padding(top = 0.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                DshChip("把环比也做成柱状", icon = DshIcons.AddChart, onClick = {})
-                DshChip("换深色模板", onClick = {})
-            }
-            Spacer(Modifier.height(7.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                DshChip("导出 PDF", onClick = {})
-                DshChip("压缩到 6 页", onClick = {})
             }
 
             Spacer(Modifier.height(4.dp))
@@ -228,7 +291,8 @@ fun S6ChatResult(
             }
         }
 
-        // —— 输入条 ——
+        // —— 输入条（v30.8：真实可输入 + 发送接 onSend）——
+        var followUp by remember { mutableStateOf("") }
         Row(
             Modifier
                 .fillMaxWidth()
@@ -246,12 +310,70 @@ fun S6ChatResult(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Icon(DshIcons.Add, null, Modifier.size(18.dp), tint = c.ink3)
-                Text("继续提要求…", style = Type.input, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                BasicTextField(
+                    value = followUp,
+                    onValueChange = { followUp = it },
+                    modifier = Modifier.weight(1f),
+                    textStyle = Type.input.copy(color = c.ink),
+                    cursorBrush = SolidColor(c.brand),
+                    singleLine = true,
+                    decorationBox = { inner ->
+                        if (followUp.isEmpty()) {
+                            Text(
+                                "继续提要求…",
+                                style = Type.input,
+                                color = c.ink3,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        inner()
+                    },
+                )
                 DshChip("V4-Pro Max", tone = ChipTone.On, mini = true)
-                DshIBtn(DshIcons.ArrowUpward, "发送", bg = c.brand, tint = Color.White, onClick = {})
+                DshIBtn(
+                    DshIcons.ArrowUpward,
+                    "发送",
+                    bg = c.brand,
+                    tint = Color.White,
+                    enabled = followUp.isNotBlank(),
+                    onClick = {
+                        val t = followUp.trim()
+                        if (t.isNotEmpty()) {
+                            followUp = ""
+                            onSend(t)
+                        }
+                    },
+                )
             }
         }
     }
+}
+
+/** v30.8：产物大小 → 人类可读（B / KB / MB / GB）。 */
+private fun fmtArtSize(bytes: Long): String {
+    if (bytes <= 0) return "—"
+    val units = listOf("B", "KB", "MB", "GB")
+    var v = bytes.toDouble()
+    var u = 0
+    while (v >= 1024 && u < units.lastIndex) { v /= 1024; u++ }
+    return if (u == 0) "${bytes}B" else "%.1f %s".format(v, units[u])
+}
+
+/** v30.8：产物卡副标题行 = 大小 · 写入时间（真实时间戳；无则省略）。 */
+private fun artifactMeta(a: S6Artifact): String {
+    val parts = mutableListOf<String>()
+    if (a.size > 0) parts += fmtArtSize(a.size)
+    if (a.mtime > 0) {
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = a.mtime
+        parts += "%02d:%02d 写入工作区".format(
+            cal.get(java.util.Calendar.HOUR_OF_DAY),
+            cal.get(java.util.Calendar.MINUTE),
+        )
+    }
+    if (parts.isEmpty()) return "已写入工作区"
+    return parts.joinToString(" · ")
 }
 
 /**
@@ -406,6 +528,9 @@ fun S8Trajectory(
         }
 
         // —— 动作条：恢复 / 分叉 / 回放 / 导出 ——
+        // v30.8：ACP 协议明确**不支持** session/load、fork、转录回放，
+        // 所以这三个按钮统一改为「禁用态 + 脚注说明原因」，
+        // 不再出现「一排里导出能点、恢复/分叉/回放点了没反应」的半吊子状态。
         Row(
             Modifier
                 .fillMaxWidth()
@@ -413,11 +538,20 @@ fun S8Trajectory(
                 .padding(bottom = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            DshBtn("恢复", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = {})
-            DshBtn("分叉", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = {})
-            DshBtn("回放", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = {})
+            DshBtn("恢复", small = true, tone = BtnTone.Ghost, enabled = false, modifier = Modifier.weight(1f), onClick = {})
+            DshBtn("分叉", small = true, tone = BtnTone.Ghost, enabled = false, modifier = Modifier.weight(1f), onClick = {})
+            DshBtn("回放", small = true, tone = BtnTone.Ghost, enabled = false, modifier = Modifier.weight(1f), onClick = {})
             DshIBtn(DshIcons.FileDownload, "导出", onClick = onExport, modifier = Modifier.size(34.dp))
         }
+        Text(
+            "恢复 / 分叉 / 回放需要 dsh 支持会话快照与转录回放，当前 ACP 协议未提供该能力，暂不可用；导出 JSONL 可用。",
+            style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+            color = c.ink3,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Space.lg)
+                .padding(bottom = 8.dp),
+        )
     }
 
     // —— S26 事件详情检查器 ——

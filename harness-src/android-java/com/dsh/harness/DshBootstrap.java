@@ -30,7 +30,7 @@ import java.util.zip.GZIPInputStream;
 public final class DshBootstrap {
 
     private static final String TAG = "DshBootstrap";
-    public static final int DSH_PORT = 3080;
+    public static final int DSH_PORT = 3081;
     private static final String STAMP = ".dsh-installed";
 
     /** bundle 修订号。仅当 bundle 布局/内容变化时才需要改（会触发重新解包）。 */

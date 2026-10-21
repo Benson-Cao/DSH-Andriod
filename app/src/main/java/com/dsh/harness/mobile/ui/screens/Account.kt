@@ -676,14 +676,41 @@ fun S33AgentPresets(
 // ============================ S35 用量与账单明细 ============================
 
 
+/**
+ * S35 用量与账单明细。
+ *
+ * v30.8：此前本页只有一句「此版本不提供账单明细」，
+ * 且 onExport / onOpenSession 传进来却从不调用（死回调）。
+ * 现在改为**真数据 + 真动作**：
+ *   - Token 用量来自 ACP `usage_update` 的真实上报（used/size）；
+ *   - 会话数来自 ACP `session/list`；
+ *   - 模型名来自当前真实选中的模型；
+ *   - 「导出」写出真实 JSONL 用量快照；「查看会话」跳回当前会话。
+ * 账单/余额仍无后端，如实说明，不编造金额。
+ */
 @Composable
 fun S35Usage(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onExport: () -> Unit = {},
     onOpenSession: () -> Unit = {},
+    /** v30.8：本次会话已用 token（ACP usage_update 累加） */
+    tokensUsed: Long = 0L,
+    /** v30.8：上下文窗口上限（ACP usage_update 的 size） */
+    tokensWindow: Long = 0L,
+    /** v30.8：usage_update 上报次数 */
+    usageSamples: Int = 0,
+    /** v30.8：真实会话数（ACP session/list） */
+    sessionCount: Int = 0,
+    /** v30.8：当前真实模型名 */
+    modelName: String = "",
+    /** v30.8：当前思考强度 */
+    thinking: String = "",
 ) {
     val c = DshTheme.colors
+    val pct = if (tokensWindow > 0) {
+        (tokensUsed * 100.0 / tokensWindow).toInt().coerceIn(0, 100)
+    } else 0
 
     DshScreen(modifier) {
         DshNavBar(
@@ -701,6 +728,93 @@ fun S35Usage(
         ) {
             Spacer(Modifier.height(12.dp))
 
+            // —— 真实 token 用量概览 ——
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(c.card)
+                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                    .padding(16.dp),
+            ) {
+                Text("本次会话 Token", style = Type.rowTitle, color = c.ink)
+                Spacer(Modifier.height(10.dp))
+                Row {
+                    UsageCell(fmtTokens(tokensUsed), "已用", c.brand, Modifier.weight(1f))
+                    UsageCell(
+                        if (tokensWindow > 0) fmtTokens(tokensWindow) else "—",
+                        "上下文窗口",
+                        c.ink,
+                        Modifier.weight(1f),
+                    )
+                    UsageCell("$sessionCount", "会话数", c.ink, Modifier.weight(1f))
+                }
+                if (tokensWindow > 0) {
+                    Spacer(Modifier.height(12.dp))
+                    // 占用条：宽度按真实百分比
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(c.line2),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(pct.coerceIn(0, 100) / 100f)
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(c.brand),
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "上下文占用 $pct% · $usageSamples 次用量上报",
+                        style = Type.meta.copy(fontSize = 10.5.sp),
+                        color = c.ink3,
+                    )
+                } else {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "还没有收到用量上报（ACP 在本轮结束后才发 usage_update）。",
+                        style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                        color = c.ink3,
+                    )
+                }
+                if (modelName.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "当前模型 $modelName" + if (thinking.isNotEmpty()) " · 思考强度 $thinking" else "",
+                        style = Type.meta.copy(fontSize = 10.5.sp),
+                        color = c.ink3,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // —— 动作：导出快照 / 查看会话（这两个回调此前是死的）——
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DshBtn(
+                    "导出用量快照",
+                    icon = DshIcons.FileDownload,
+                    small = true,
+                    tone = BtnTone.Ghost,
+                    modifier = Modifier.weight(1f),
+                    onClick = onExport,
+                )
+                DshBtn(
+                    "查看当前会话",
+                    icon = DshIcons.Timeline,
+                    small = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenSession,
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // —— 账单能力边界（如实说明，不编造金额）——
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -713,13 +827,44 @@ fun S35Usage(
                 Spacer(Modifier.height(7.dp))
                 Text(
                     "本 App 以 API Key 计费，没有账户余额与账单系统。\n" +
-                        "真实用量与扣费请在 platform.deepseek.com 的「用量」页查看。",
+                        "扣费明细请在 platform.deepseek.com 的「用量」页查看。",
                     style = Type.sec.copy(lineHeight = 20.sp),
                     color = c.ink3,
                 )
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
+}
+
+/** v30.8：token 数 → 人类可读（1.2K / 3.4M）。 */
+private fun fmtTokens(n: Long): String {
+    if (n <= 0) return "0"
+    return when {
+        n < 1000 -> n.toString()
+        n < 1_000_000 -> "%.1fK".format(n / 1000.0)
+        else -> "%.2fM".format(n / 1_000_000.0)
+    }
+}
+
+/** v30.8：用量概览的单个数字格。 */
+@Composable
+private fun UsageCell(
+    value: String,
+    label: String,
+    valueColor: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    val c = DshTheme.colors
+    Column(modifier) {
+        Text(
+            value,
+            style = Type.body.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold),
+            color = valueColor,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(label, style = Type.meta.copy(fontSize = 10.5.sp), color = c.ink3, maxLines = 1)
     }
 }
 

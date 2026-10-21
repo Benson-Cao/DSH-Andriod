@@ -159,7 +159,7 @@ public final class DshProcessManager {
      * 读取 dsh web 打印出来的鉴权 URL。
      *
      * 服务启动后 stdout 会有一行：
-     *   dsh web: http://127.0.0.1:3080/?token=xxxxxxxxxxxx
+     *   dsh web: http://127.0.0.1:3081/?token=xxxxxxxxxxxx
      * 裸的根路径会返回 401（"dsh web authentication required"），
      * 所以 WebView 必须加载这个带 token 的 URL —— 它会 303 下发了 dsh-auth cookie 再跳回 /。
      * token 每次启动都不同，所以每次都要从日志里重新抓最后一次出现的那条。
@@ -312,7 +312,7 @@ public final class DshProcessManager {
 
     /**
      * node 启动成功后会打印一行带 token 的 web URL：
-     *   dsh web: http://127.0.0.1:3080/?token=xxxxxxxxxxxx
+     *   dsh web: http://127.0.0.1:3081/?token=xxxxxxxxxxxx
      * 生产者（运行时）目前没显式发 DSH_STATE ready，这里把它规范化为 ready 事件，
      * 让启动页状态文案能即时更新（contract.md §3）。注意：
      * - ready 只更新状态文本，绝不触发 WebView 加载 —— WebView 仍由

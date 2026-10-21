@@ -290,11 +290,15 @@ fun S5ChatRunning(
     onOpenMore: () -> Unit,
     onOpenTrajectory: () -> Unit,
     onSend: (String) -> Unit,
+    /** v30.8：本轮已结束且有回答 → 跳 S6 成果页（此前 S6 是孤儿路由，无任何入口） */
+    onOpenResult: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var input by remember { mutableStateOf("") }
     val listState = rememberScrollState()
     val hasLive = liveMessages.isNotEmpty()
+    // v30.8：是否已有可展示的最终回答 → 决定「查看成果」入口是否出现
+    val hasAnswer = liveMessages.any { it.role == com.dsh.harness.mobile.data.DshViewModel.Role.Assistant }
     // v13：顶部「对话 / 轨迹」并列标签
     var tab by remember { mutableStateOf(0) }
 
@@ -407,6 +411,18 @@ fun S5ChatRunning(
                     // ⚠️ 子代理与后台任务：ACP **没有**对应事件类型
                     //（协议表里只有 user/agent message、thought、tool_call、usage、config）。
                     // 所以这两块不再展示设计稿演示数据，等接上能力再开。
+
+                    // —— v30.8：本轮结束后给出「查看成果」入口（→ S6 成果页）——
+                    if (!running && hasAnswer) {
+                        DshBtn(
+                            "查看成果",
+                            icon = DshIcons.Slideshow,
+                            small = true,
+                            tone = BtnTone.Primary,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = onOpenResult,
+                        )
+                    }
 
                     Spacer(Modifier.height(4.dp))
                 }

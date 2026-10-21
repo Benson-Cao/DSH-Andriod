@@ -308,6 +308,8 @@ fun S11Workspace(
     onSearch: () -> Unit = {},
     /** v20：工作区横滑条末尾 add → S41 选择工作区目录 */
     onAddWorkspace: () -> Unit = {},
+    /** v30.8：Git 页签 → S47 提交流程（S47 此前是孤儿路由，无任何入口） */
+    onOpenGitCommit: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     val ctx = LocalContext.current.applicationContext
@@ -411,7 +413,28 @@ fun S11Workspace(
                 }
 
                 // —— Git 变更：本 harness 无 Git 后端，诚实空态 ——
-                1 -> DshEmpty("暂无 Git 变更记录", icon = DshIcons.Sync)
+                // v30.8：给出唯一入口 → S47 提交流程（该页自带"示例数据"标注）
+                1 -> Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    DshEmpty("暂无 Git 变更记录", icon = DshIcons.Sync)
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "本机运行环境未内置 Git，无法读取真实变更。",
+                        style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                        color = c.ink3,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    DshBtn(
+                        "查看提交流程",
+                        small = true,
+                        tone = BtnTone.Ghost,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onOpenGitCommit,
+                    )
+                }
 
                 // —— 产物：无真实产物数据源，诚实空态 ——
                 2 -> DshEmpty("还没有生成产物", icon = DshIcons.Slideshow)
@@ -469,7 +492,7 @@ fun S13Automation(
             ) {
                 DshEmpty("还没有自动化任务", icon = DshIcons.Schedule)
                 Spacer(Modifier.height(16.dp))
-                DshBtn("新建第一个任务", icon = DshIcons.Add, onClick = {})
+                DshBtn("新建第一个任务", icon = DshIcons.Add, onClick = onNewTask)
             }
             return@DshScreen
         }

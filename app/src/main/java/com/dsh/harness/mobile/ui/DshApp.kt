@@ -195,6 +195,10 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     val error by vm.error.collectAsState()
     val busy by vm.busy.collectAsState()
     val contextUsage by vm.contextUsage.collectAsState()
+    // v30.8：真实 token 用量（ACP usage_update 累加），S35 用量页用
+    val tokensUsed by vm.tokensUsed.collectAsState()
+    val tokensWindow by vm.tokensWindow.collectAsState()
+    val usageSamples by vm.usageSamples.collectAsState()
     val catalog by vm.catalog.collectAsState()
     val catalogLoading by vm.catalogLoading.collectAsState()
     val apiKey by vm.apiKey.collectAsState()
@@ -280,6 +284,77 @@ fun DshApp(startRoute: Route = Route.S3Home) {
         nasReadOnly = DshSync.readOnlyNow(ctx)
         nasLastSyncText = lastSyncLabel()
     }
+
+    // v30.8：S6 成果页的**真实产物**。
+    // 数据源 = 当前工作区目录的真实文件（ACP 的 cwd 就是它）+ SAF 已挂载目录。
+    // 不写死设计稿里的 "Q3数据汇总.pptx"，扫到什么显示什么。
+    var artifacts by remember { mutableStateOf<List<S6Artifact>>(emptyList()) }
+    var artifactTick by remember { mutableStateOf(0) }
+    LaunchedEffect(workspace, safTick, artifactTick) {
+        val ws = workspace
+        val out = mutableListOf<S6Artifact>()
+        if (!ws.isNullOrBlank()) {
+            withContext(Dispatchers.IO) {
+                try {
+                    val dir = java.io.File(ws)
+                    if (dir.isDirectory) {
+                        dir.listFiles()?.asSequence()
+                            ?.filter { it.isFile && !it.name.startsWith(".") }
+                            ?.sortedByDescending { it.lastModified() }
+                            ?.take(20)
+                            ?.forEach { f ->
+                                out += S6Artifact(
+                                    name = f.name,
+                                    size = f.length(),
+                                    mtime = f.lastModified(),
+                                    ext = f.extension.uppercase(),
+                                    absPath = f.absolutePath,
+                                )
+                            }
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        }
+        artifacts = out
+    }
+
+    // v30.8：S6 的工作过程摘要 —— 由真实工具调用事件归并而来。
+    // 没有工具调用就返回 null（不渲染折叠块），不编造"9 步"。
+    fun processSummary(): String? {
+        val toolEvents = events.filter {
+            it.kind == com.dsh.harness.mobile.ui.screens.EventKind.Tool ||
+                it.kind == com.dsh.harness.mobile.ui.screens.EventKind.SubTool
+        }
+        if (toolEvents.isEmpty()) return null
+        return toolEvents.joinToString("\n") { ev ->
+            if (ev.detail.isNotEmpty()) "${ev.title} · ${ev.detail}" else ev.title
+        }
+    }
+
+    // v30.8：S6 的变更摘要 = 工作区里真实存在的文件数与最近几个文件名。
+    fun changeSummary(): Pair<Int, String>? {
+        if (artifacts.isEmpty()) return null
+        val n = artifacts.size
+        val names = artifacts.take(3).joinToString("、") { it.name } + if (n > 3) " 等 $n 个文件" else " 共 $n 个文件"
+        return n to names
+    }
+
+    // v30.8：继续迭代建议 —— 基于真实产物类型生成，不写死设计稿文案。
+    fun suggestions(): List<String> {
+        val out = mutableListOf<String>()
+        artifacts.firstOrNull()?.let { a ->
+            if (a.ext.isNotEmpty()) out += "把 ${a.name} 转成 PDF"
+            out += "基于 ${a.name} 再生成一份摘要"
+        }
+        if (out.isEmpty()) {
+            // 没有产物时给的是"下一步动作"，仍然是可执行的真实提示词
+            out += "把这一轮的结论整理成要点"
+            out += "换个更简洁的说法再讲一遍"
+        }
+        return out.take(4)
+    }
+
     val safLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -434,6 +509,11 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                                 toast = "已切回本地工作区 ${home.name}"
                             }
                         },
+                        // v30.8（S18「断连期间仍可」三行能力卡）
+                        nasMountedFileCount = artifacts.size,
+                        onOpenSearch = { nav.go(Route.S45GlobalSearch) },
+                        onOpenMountedFiles = { nav.go(Route.S11Workspace) },
+                        onOpenLocalStaging = { nav.go(Route.S11Workspace) },
                     )
 
                     Route.S5ChatRunning -> S5ChatRunning(
@@ -451,18 +531,51 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onOpenMore = { sheet = SheetKind.More },
                         onOpenTrajectory = { nav.go(Route.S8Trajectory) },
                         onSend = { vm.send(it) },
+                        onOpenResult = { nav.go(Route.S6ChatResult) },
                     )
 
                     Route.S6ChatResult -> S6ChatResult(
                         title = "当前会话",
                         answer = messages.lastOrNull { it.role == DshViewModel.Role.Assistant }?.text
-                            ?: "任务已完成，产物已写入工作区。",
+                            ?: "本轮还没有产出回答。",
                         onBack = { nav.backOrHome() },
                         onOpenWorkspace = { nav.go(Route.S11Workspace) },
-                        onPreview = {},
-                        onShare = {},
+                        // v30.8：预览 = 打开工作区（Android 无内置文档预览器，不做假预览）
+                        onPreview = { nav.go(Route.S11Workspace) },
+                        // v30.8：分享 = 真实分享第一个产物（走 FileProvider + ACTION_SEND）
+                        onShare = {
+                            val a = artifacts.firstOrNull()
+                            val ap = a?.absPath
+                            if (ap == null) {
+                                toast = "没有可分享的产物文件"
+                            } else {
+                                try {
+                                    val f = java.io.File(ap)
+                                    val intent = com.dsh.harness.DshExporter.shareIntent(ctx, f, null)
+                                    if (intent == null) {
+                                        toast = "该文件不可导出（不在允许目录内）"
+                                    } else {
+                                        ctx.startActivity(
+                                            Intent.createChooser(intent, "分享 " + a.name)
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                } catch (t: Throwable) {
+                                    toast = "分享失败：${t.message ?: "未知错误"}"
+                                }
+                            }
+                        },
                         events = events,
                         onOpenTrajectory = { nav.go(Route.S8Trajectory) },
+                        // v30.8：真实产物 / 变更 / 建议 / 发送
+                        artifacts = artifacts,
+                        processSummary = processSummary(),
+                        changeSummary = changeSummary(),
+                        suggestions = suggestions(),
+                        onSend = { t ->
+                            vm.send(t)
+                            nav.go(Route.S5ChatRunning)
+                        },
                     )
 
                     Route.S8Trajectory -> S8Trajectory(
@@ -489,6 +602,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onOpenDrawer = { drawerOpen = true },
                         onSearch = { nav.go(Route.S45GlobalSearch) },
                         onAddWorkspace = { nav.go(Route.S41PickFolder) },
+                        onOpenGitCommit = { nav.go(Route.S47GitCommit) },
                     )
 
                     Route.S12Plugins -> S12Plugins(
@@ -680,8 +794,18 @@ fun DshApp(startRoute: Route = Route.S3Home) {
 
                     Route.S35Usage -> S35Usage(
                         onBack = { nav.backOrHome() },
-                        onExport = { nav.go(Route.S46Export) },
+                        // v30.8：导出 = 写真实用量快照 JSONL（此前只是跳到 S46 导出脱敏日志，与用量无关）
+                        onExport = {
+                            val p = vm.exportUsageSnapshot()
+                            toast = if (p != null) "用量快照已保存：$p" else "导出失败"
+                        },
                         onOpenSession = { nav.go(Route.S5ChatRunning) },
+                        tokensUsed = tokensUsed,
+                        tokensWindow = tokensWindow,
+                        usageSamples = usageSamples,
+                        sessionCount = sessions.size,
+                        modelName = modelName,
+                        thinking = thinking,
                     )
 
                     Route.S37ApiKeyConfigured -> S37ApiKeyConfigured(

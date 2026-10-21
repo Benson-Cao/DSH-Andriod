@@ -627,5 +627,5 @@ private fun s49BuildCmd(tpl: Int, profile: Int, args: Set<String>, workspace: St
 
 /** 快捷指令（横滑） */
 private val TERMINAL_QUICK = listOf(
-    "--port 3082", "headless", "tail 日志", "wake-lock", "setup-storage",
+    "--port 3081", "headless", "tail 日志", "wake-lock", "setup-storage",
 )

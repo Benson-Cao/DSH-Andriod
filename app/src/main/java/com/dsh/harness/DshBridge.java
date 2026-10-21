@@ -18,7 +18,7 @@ import java.lang.ref.WeakReference;
  * 所以只能由原生做。
  *
  * ⚠️ 安全：{@code @JavascriptInterface} 只在**已加载我们信任的页面**时可达
- * （WebView 只 load 127.0.0.1:3080 的 dsh 实例），所以这里不额外做 origin 校验。
+ * （WebView 只 load 127.0.0.1:3081 的 dsh 实例），所以这里不额外做 origin 校验。
  * 若将来要加载远程页面，必须补上域名白名单。
  *
  * ⚠️ 生命周期（C-04 / U12 修复）：

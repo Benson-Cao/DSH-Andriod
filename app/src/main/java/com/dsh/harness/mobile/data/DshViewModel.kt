@@ -34,6 +34,9 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
 
     private val client = DshAcpClient(app)
 
+    /** v30.8：导出用量快照等需要 Context 的地方统一用这个（不依赖 getApplication()） */
+    private val appCtx: Application = app
+
     // ==================== 对话状态 ====================
 
     data class ChatMessage(
@@ -119,6 +122,23 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
     private val _contextUsage = MutableStateFlow<Int?>(null)
     val contextUsage: StateFlow<Int?> = _contextUsage
 
+    /**
+     * v30.8：真实 token 用量。
+     *
+     * ACP 的 `usage_update` 只给当前上下文的 used/size，不给账单。
+     * 这里在**每次 usage_update 时取 used 的增量**累加成「本次会话已用 token」，
+     * 并记录最后一次上报的 size 作为上下文窗口上限 —— S35 用量页据此出真实数字。
+     */
+    private val _tokensUsed = MutableStateFlow(0L)
+    val tokensUsed: StateFlow<Long> = _tokensUsed
+    private val _tokensWindow = MutableStateFlow(0L)
+    val tokensWindow: StateFlow<Long> = _tokensWindow
+    /** 累计上报次数（= usage_update 到达的次数，用作"数据点数量"的诚实指标） */
+    private val _usageSamples = MutableStateFlow(0)
+    val usageSamples: StateFlow<Int> = _usageSamples
+    /** 上一次 usage_update 上报的 used（用于算增量） */
+    private var lastReportedUsed = 0L
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
 
@@ -154,6 +174,33 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
 
     /** S23「导出脱敏日志」：返回落盘路径，失败为 null */
     fun exportRedactedLog(): String? = catalogLoader.writeRedactedLog(_catalog.value)?.absolutePath
+
+    /**
+     * v30.8：S35「导出用量快照」——把本次会话的真实 token 用量写成 JSONL。
+     * 数据全部来自 ACP usage_update 的真实上报，不含任何编造数字。
+     * @return 落盘路径；失败为 null
+     */
+    fun exportUsageSnapshot(): String? = try {
+        val dir = java.io.File(DshBootstrapAccess.homeDir(appCtx), ".dsh")
+        if (!dir.exists()) dir.mkdirs()
+        val f = java.io.File(dir, "usage-snapshot.jsonl")
+        val line = org.json.JSONObject().apply {
+            put("exportedAt", System.currentTimeMillis())
+            put("model", _modelName.value)
+            put("thinking", _thinking.value)
+            put("tokensUsed", _tokensUsed.value)
+            put("tokensWindow", _tokensWindow.value)
+            put("usageSamples", _usageSamples.value)
+            put("sessionCount", _sessions.value.size)
+            put("messageCount", _messages.value.size)
+            put("toolCallCount", _tools.value.size)
+        }.toString()
+        f.writeText(line + "\n")
+        f.absolutePath
+    } catch (t: Throwable) {
+        Log.e(TAG, "写用量快照失败", t)
+        null
+    }
 
     // ==================== 插件市场精选目录（S21/S22） ====================
 
@@ -317,6 +364,11 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                 _messages.value = emptyList()
                 _tools.value = emptyList()
                 _contextUsage.value = null
+                // v30.8：新会话 → token 用量归零（否则跨会话累加会算错）
+                _tokensUsed.value = 0L
+                _tokensWindow.value = 0L
+                _usageSamples.value = 0
+                lastReportedUsed = 0L
                 parseConfigOptions()
             } else {
                 _workspace.value = null
@@ -531,6 +583,16 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                 val size = update.optLong("size", 0L)
                 if (size > 0) {
                     _contextUsage.value = (used * 100.0 / size).toInt().coerceIn(0, 100)
+                }
+                // v30.8：累加真实 token 用量。
+                // usage_update 的 used 是**当前上下文总量**，不是增量；
+                // 所以增量 = used - 上次上报的 used（首次 = used 本身）。
+                if (used > 0) {
+                    val delta = maxOf(0L, used - lastReportedUsed)
+                    lastReportedUsed = used
+                    _tokensUsed.value = _tokensUsed.value + delta
+                    _tokensWindow.value = maxOf(_tokensWindow.value, size)
+                    _usageSamples.value = _usageSamples.value + 1
                 }
             }
 

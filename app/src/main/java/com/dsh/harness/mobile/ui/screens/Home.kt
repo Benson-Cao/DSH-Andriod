@@ -110,6 +110,18 @@ fun S3Home(
     onNasReconnect: () -> Unit = {},
     /** 点「切回本地工作区」 */
     onSwitchLocalWorkspace: () -> Unit = {},
+    /**
+     * v30.8（设计稿 v22 S18）：「断连期间仍可」三行能力卡。
+     * 第二行的副标题要写真实的挂载目录文件数（nasMountedFileCount），
+     * 不写死设计稿里的 "Q3数据汇总.pptx 等 6 个"。
+     */
+    nasMountedFileCount: Int = 0,
+    /** 「读取与预览挂载目录文件」→ 打开工作区（只读浏览） */
+    onOpenMountedFiles: () -> Unit = {},
+    /** 「搜索资料与核对信息」→ 全局搜索 */
+    onOpenSearch: () -> Unit = {},
+    /** 「产物改写到本地暂存目录」→ 打开工作区（本地暂存） */
+    onOpenLocalStaging: () -> Unit = {},
 ) {
     val c = DshTheme.colors
 
@@ -373,6 +385,49 @@ fun S3Home(
                 }
             }
 
+            // v30.8：设计稿 v22 S18「断连期间仍可」三行能力卡。
+            // 只读降级时告诉用户"还剩什么能用"，避免整屏灰掉像坏了。
+            if (nasReadOnly) {
+                DshSecTitle("断连期间仍可", Modifier.padding(top = 0.dp))
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
+                ) {
+                    DshMRow(
+                        title = "搜索资料与核对信息",
+                        subtitle = "不依赖工作区写入",
+                        icon = DshIcons.Search,
+                        iconTone = ChipTone.Ok,
+                        chevron = true,
+                        onClick = onOpenSearch,
+                    )
+                    DshDivider()
+                    DshMRow(
+                        title = "读取与预览挂载目录文件",
+                        subtitle = if (nasMountedFileCount > 0)
+                            "挂载目录中 $nasMountedFileCount 个文件"
+                        else
+                            "挂载目录当前读不到文件",
+                        icon = DshIcons.Visibility,
+                        iconTone = ChipTone.Ok,
+                        chevron = true,
+                        onClick = onOpenMountedFiles,
+                    )
+                    DshDivider()
+                    DshMRow(
+                        title = "产物改写到本地暂存目录",
+                        subtitle = "恢复后由同步任务回传",
+                        icon = DshIcons.FolderOpen,
+                        iconTone = ChipTone.Warn,
+                        chevron = true,
+                        onClick = onOpenLocalStaging,
+                    )
+                }
+            }
+
             // v30.7：只读降级时给「切回本地工作区」出口（设计稿 S18 底部幽灵按钮）
             if (nasReadOnly) {
                 Spacer(Modifier.height(14.dp))
@@ -381,6 +436,13 @@ fun S3Home(
                     icon = DshIcons.HomeWork,
                     tone = BtnTone.Ghost,
                     onClick = onSwitchLocalWorkspace,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "降级由挂载状态触发，不由 Agent 判断；恢复连接后需你确认才把暂存产物回传 NAS。",
+                    style = Type.meta.copy(fontSize = 11.sp, lineHeight = 18.sp),
+                    color = c.ink3,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
