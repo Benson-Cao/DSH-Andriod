@@ -310,6 +310,8 @@ fun S11Workspace(
     onAddWorkspace: () -> Unit = {},
     /** v30.8：Git 页签 → S47 提交流程（S47 此前是孤儿路由，无任何入口） */
     onOpenGitCommit: () -> Unit = {},
+    /** v30.9：顶栏「更多」→ 归档会话 S48（此前是空回调） */
+    onOpenArchived: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     val ctx = LocalContext.current.applicationContext
@@ -334,7 +336,7 @@ fun S11Workspace(
             title = "工作区",
             actions = {
                 DshIBtn(DshIcons.Search, "搜索", onClick = onSearch)
-                DshIBtn(DshIcons.MoreVert, "更多", onClick = {})
+                DshIBtn(DshIcons.MoreVert, "更多", onClick = onOpenArchived)
                 DshIBtn(DshIcons.Menu, "侧边栏", onClick = onOpenDrawer)
             },
         )

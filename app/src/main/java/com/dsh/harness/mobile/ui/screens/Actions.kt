@@ -11,6 +11,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +25,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -606,11 +608,17 @@ fun S43AddModel(
     onSave: () -> Unit = {},
 ) {
     val c = DshTheme.colors
-    val mappings = listOf(
+    // v30.9：档位映射做成屏内真实可增删列表（此前「添加档位映射」是空回调）。
+    // 默认三档是 DashScope/百炼的官方档位，用户可追加自定义 label/param 或删除自定义档位。
+    val baseMappings = listOf(
         Triple("Off", "enable_thinking=false", ChipTone.Neutral),
         Triple("Low", "thinking_budget=1024", ChipTone.Neutral),
         Triple("High", "thinking_budget=8192", ChipTone.Neutral),
     )
+    var customMappings by remember { mutableStateOf(listOf<Triple<String, String, ChipTone>>()) }
+    var newLabel by remember { mutableStateOf("") }
+    var newParam by remember { mutableStateOf("") }
+    val mappings = baseMappings + customMappings
 
     DshScreen(modifier) {
         DshNavBar(
@@ -668,17 +676,78 @@ fun S43AddModel(
             ) {
                 mappings.forEachIndexed { i, (label, param, _) ->
                     if (i > 0) DshDivider()
-                    S43MapRow(label = label, param = param)
+                    S43MapRow(
+                        label = label,
+                        param = param,
+                        // 只有自定义档位可删；官方三档是服务端语义，不给删。
+                        onDelete = if (i >= baseMappings.size) {
+                            {
+                                val target = Triple(label, param, ChipTone.Neutral)
+                                customMappings = customMappings.filterNot { it == target }
+                            }
+                        } else null,
+                    )
                 }
             }
 
+            // —— 新增档位：两个真输入框 + 添加 ——
+            Row(
+                Modifier.padding(top = 9.dp),
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                DshFieldGroup(label = "档位名", modifier = Modifier.weight(1f)) {
+                    DshFinRow {
+                        BasicTextField(
+                            value = newLabel,
+                            onValueChange = { newLabel = it.take(16) },
+                            singleLine = true,
+                            textStyle = Type.mono.copy(color = c.ink),
+                            cursorBrush = SolidColor(c.brand),
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { inner ->
+                                if (newLabel.isEmpty()) {
+                                    Text("如 Medium", style = Type.mono, color = c.ink3)
+                                }
+                                inner()
+                            },
+                        )
+                    }
+                }
+                DshFieldGroup(label = "API 参数", modifier = Modifier.weight(1.4f)) {
+                    DshFinRow {
+                        BasicTextField(
+                            value = newParam,
+                            onValueChange = { newParam = it.take(64) },
+                            singleLine = true,
+                            textStyle = Type.mono.copy(color = c.ink),
+                            cursorBrush = SolidColor(c.brand),
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { inner ->
+                                if (newParam.isEmpty()) {
+                                    Text("thinking_budget=4096", style = Type.mono, color = c.ink3)
+                                }
+                                inner()
+                            },
+                        )
+                    }
+                }
+            }
             DshBtn(
-                "添加档位映射",
+                if (customMappings.isEmpty()) "添加档位映射" else "再添加一个档位",
                 Modifier.padding(top = 9.dp),
                 icon = DshIcons.Add,
                 tone = BtnTone.Ghost,
                 height = 40.dp,
-                onClick = {},
+                enabled = newLabel.isNotBlank() && newParam.isNotBlank(),
+                onClick = {
+                    customMappings = customMappings + Triple(
+                        newLabel.trim(),
+                        newParam.trim(),
+                        ChipTone.Neutral,
+                    )
+                    newLabel = ""
+                    newParam = ""
+                },
             )
 
             // —— 蓝色说明卡（soft）——
@@ -706,7 +775,7 @@ fun S43AddModel(
 
 /** S43 单行档位映射：52dp 档位 chip ↔ 居中 ↔ 右对齐参数 + 26dp 删除钮 */
 @Composable
-private fun S43MapRow(label: String, param: String) {
+private fun S43MapRow(label: String, param: String, onDelete: (() -> Unit)? = null) {
     val c = DshTheme.colors
     Row(
         Modifier
@@ -741,14 +810,22 @@ private fun S43MapRow(label: String, param: String) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        // v30.9：官方三档不提供删除（onDelete == null → 渲染不可点的空位），自定义档位可删。
         Box(
             Modifier
                 .size(26.dp)
                 .clip(RoundedCornerShape(Radius.md))
-                .clickable { },
+                .then(
+                    if (onDelete != null) Modifier.clickable { onDelete() } else Modifier,
+                ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(DshIcons.Close, null, Modifier.size(15.dp), tint = c.ink3)
+            Icon(
+                DshIcons.Close,
+                if (onDelete != null) "删除该档位" else "官方档位不可删除",
+                Modifier.size(if (onDelete != null) 15.dp else 0.dp),
+                tint = c.ink3,
+            )
         }
     }
 }

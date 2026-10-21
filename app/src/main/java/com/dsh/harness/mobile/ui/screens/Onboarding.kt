@@ -33,6 +33,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import com.dsh.harness.mobile.data.DshProviders
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
@@ -556,13 +562,32 @@ fun S25Provider(
     val pidOk = pid.matches(Regex("^[a-z][a-z0-9]*$"))
     val canCreate = pidOk && name.isNotBlank() && url.isNotBlank() && key.isNotBlank()
 
+    // v30.9：两处空回调接真实现 ———
+    //  「打开配置文件」= 复制本机真实 providers.json 路径到剪贴板；
+    //  「获取可用模型」= 按 OpenAI 兼容协议 GET {base}/models 带 Bearer key 拉真实列表。
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    fun notice(msg: String) =
+        android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var fetching by remember { mutableStateOf(false) }
+    var fetchErr by remember { mutableStateOf<String?>(null) }
+
     DshScreen(modifier) {
         DshNavBar(
             onBack = onBack,
             title = "模型",
             stacked = true,
             actions = {
-                DshChip("打开配置文件", icon = DshIcons.Description, mini = true, onClick = {})
+                DshChip(
+                    text = "打开配置文件",
+                    icon = DshIcons.Description,
+                    mini = true,
+                    onClick = {
+                        val f = com.dsh.harness.mobile.data.DshProviders.providersFile(ctx)
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(f.absolutePath))
+                        notice("已复制路径：${f.absolutePath}")
+                    },
+                )
             },
         )
 
@@ -613,8 +638,74 @@ fun S25Provider(
                             Text(models.joinToString(" / "), style = Type.meta.copy(fontSize = 11.5.sp), color = c.ink3, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
-                    DshBtn("获取可用模型", small = true, tone = BtnTone.Ghost, modifier = Modifier.padding(start = 8.dp), onClick = {})
+                    DshBtn(
+                        text = if (fetching) "拉取中…" else "获取可用模型",
+                        small = true,
+                        tone = BtnTone.Ghost,
+                        enabled = !fetching && url.isNotBlank() && key.isNotBlank(),
+                        modifier = Modifier.padding(start = 8.dp),
+                        onClick = {
+                            fetchErr = null
+                            fetching = true
+                            scope.launch {
+                                val base = url.trim().trimEnd('/')
+                                val endpoint = if (base.endsWith("/v1")) "$base/models" else "$base/v1/models"
+                                val r = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                                            requestMethod = "GET"
+                                            connectTimeout = 12000
+                                            readTimeout = 15000
+                                            setRequestProperty("Authorization", "Bearer ${key.trim()}")
+                                            setRequestProperty("Accept", "application/json")
+                                        }
+                                        try {
+                                            val code = conn.responseCode
+                                            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                                                ?.bufferedReader()?.use { it.readText() } ?: ""
+                                            code to body
+                                        } finally {
+                                            conn.disconnect()
+                                        }
+                                    }
+                                }
+                                fetching = false
+                                r.onSuccess { (code, body) ->
+                                    if (code !in 200..299) {
+                                        fetchErr = "HTTP $code · " + body.take(120)
+                                        notice("拉取失败：HTTP $code")
+                                    } else {
+                                        val ids = runCatching {
+                                            val arr = JSONObject(body).optJSONArray("data")
+                                            (0 until (arr?.length() ?: 0)).mapNotNull { i ->
+                                                arr!!.optJSONObject(i)?.optString("id")?.takeIf { it.isNotBlank() }
+                                            }
+                                        }.getOrDefault(emptyList())
+                                        if (ids.isEmpty()) {
+                                            fetchErr = "返回体里没有 data[].id（不是 OpenAI 兼容格式）"
+                                            notice("未解析到模型列表")
+                                        } else {
+                                            models = (models + ids).distinct().sorted()
+                                            notice("已拉到 ${ids.size} 个模型")
+                                        }
+                                    }
+                                }.onFailure { e ->
+                                    fetchErr = (e.message ?: e.javaClass.simpleName).take(140)
+                                    notice("拉取失败")
+                                }
+                            }
+                        },
+                    )
                 }
+            }
+            if (fetchErr != null) {
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    "拉取失败：$fetchErr",
+                    style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                    color = c.danger,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
             Spacer(Modifier.height(8.dp))
             Row(

@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -28,7 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -488,17 +491,50 @@ fun S19BuiltinPlugins(
 ) {
     val c = DshTheme.colors
     var filter by remember { mutableStateOf(PlugFilter.All) }
+    // v30.9：顶栏放大镜 → 真搜索（按插件 id / 包名 / 配置键名过滤）
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { onRefresh() }
 
-    val shown = remember(catalog.plugins, filter) { catalog.plugins.filter { it.matches(filter) } }
+    val shown = remember(catalog.plugins, filter, query) {
+        val base = catalog.plugins.filter { it.matches(filter) }
+        if (query.isBlank()) base
+        else base.filter { p ->
+            p.id.contains(query, true) ||
+                p.pkg.contains(query, true) ||
+                p.configKeys.any { it.contains(query, true) }
+        }
+    }
 
     DshScreen(modifier) {
         DshNavBar(
             onBack = onBack,
             title = "内置插件",
             stacked = true,
-            actions = { DshIBtn(DshIcons.Search, "搜索", onClick = {}) },
+            actions = {
+                DshIBtn(DshIcons.Search, "搜索", onClick = { searching = !searching })
+            },
         )
+
+        // v30.9：搜索框（收起时隐藏）
+        if (searching) {
+            BasicTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.lg, vertical = 8.dp),
+                textStyle = Type.input.copy(color = c.ink),
+                cursorBrush = SolidColor(c.brand),
+                singleLine = true,
+                decorationBox = { inner ->
+                    if (query.isEmpty()) {
+                        Text("搜索插件 id / 包名 / 配置键…", style = Type.input, color = c.ink3)
+                    }
+                    inner()
+                },
+            )
+        }
 
         Column(
             Modifier
@@ -580,6 +616,8 @@ fun S20BuiltinPluginConfig(
     val plugin = remember(catalog.plugins, pluginId) {
         catalog.plugins.firstOrNull { it.id == pluginId }
     }
+    // v30.9：生效配置原文（来自 dsh --dump-config 的 config 块，真实数据）
+    var showRaw by remember { mutableStateOf(false) }
 
     DshScreen(modifier) {
         DshNavBar(
@@ -698,6 +736,8 @@ fun S20BuiltinPluginConfig(
             Spacer(Modifier.height(12.dp))
 
             // —— 双按钮 ——
+            // v30.9：「查看生效配置」→ 真展示 dump 出来的 config 原文（catalog.rawConfig）；
+            // 「启用/停用」依赖 pnpm（dsh plugin 转发给 pnpm），本机无 pnpm → 明确禁用 + 说明。
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 DshBtn(
                     text = "查看生效配置",
@@ -705,7 +745,7 @@ fun S20BuiltinPluginConfig(
                     tone = BtnTone.Ghost,
                     small = true,
                     modifier = Modifier.weight(1f),
-                    onClick = {},
+                    onClick = { showRaw = true },
                 )
                 DshBtn(
                     text = if (plugin.enabled) "停用并回滚" else "启用",
@@ -716,8 +756,57 @@ fun S20BuiltinPluginConfig(
                     onClick = {},
                 )
             }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "启停需要 pnpm（本机未安装）：dsh plugin --profile acp add/remove <包名>",
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
             Spacer(Modifier.height(9.dp))
-            DshBtn("返回插件分流", tone = BtnTone.Ghost, onClick = onBackToSplit)
+
+            // v30.9：「查看生效配置」→ 展示 catalog.rawConfig（dsh --dump-config 的 config 块原文）
+            if (showRaw) {
+                Spacer(Modifier.height(9.dp))
+                DshSecTitle("生效配置原文", note = "dsh --dump-config")
+                PlugCard {
+                    Column(Modifier.padding(12.dp)) {
+                        if (plugin.rawConfig.isBlank()) {
+                            Text(
+                                "该插件在 dump 中没有 config 块。",
+                                style = Type.meta,
+                                color = c.ink3,
+                            )
+                        } else {
+                            Text(
+                                plugin.rawConfig,
+                                style = Type.meta.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    lineHeight = 16.sp,
+                                ),
+                                color = c.ink2,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "来源：dsh --profile <profile> --dump-config 的 config: 块，只读不可改；" +
+                        "改配置请编辑 Profile 的 cordis.patch.yml。",
+                    style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                    color = c.ink3,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(9.dp))
+            }
+
+            DshBtn(
+                text = if (showRaw) "收起配置原文" else "返回插件分流",
+                tone = BtnTone.Ghost,
+                onClick = { if (showRaw) showRaw = false else onBackToSplit() },
+            )
             Spacer(Modifier.height(12.dp))
         }
     }
@@ -1035,7 +1124,12 @@ data class MarketPlugin(
 
 /** 市场底栏。设计稿 .mkt-bar：h52、图标 20 + 文字 10、选中品牌色加粗。 */
 @Composable
-private fun MktBar(selected: Int, onOpenInstalled: () -> Unit, onOpenThemes: () -> Unit) {
+private fun MktBar(
+    selected: Int,
+    onOpenInstalled: () -> Unit,
+    onOpenThemes: () -> Unit,
+    onOpenDiscover: () -> Unit = {},
+) {
     val c = DshTheme.colors
     Column(Modifier.fillMaxWidth().background(c.tabbg)) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
@@ -1045,7 +1139,7 @@ private fun MktBar(selected: Int, onOpenInstalled: () -> Unit, onOpenThemes: () 
                 .height(52.dp)
                 .navigationBarsPadding(),
         ) {
-            MktTab("发现", DshIcons.Explore, selected == 0, Modifier.weight(1f)) {}
+            MktTab("发现", DshIcons.Explore, selected == 0, Modifier.weight(1f), onOpenDiscover)
             MktTab("主题", DshIcons.Palette, selected == 1, Modifier.weight(1f), onOpenThemes)
             MktTab("已安装", DshIcons.FileDownload, selected == 2, Modifier.weight(1f), onOpenInstalled)
         }
@@ -1165,7 +1259,6 @@ fun S22MarketDetail(
                             title = cap,
                             icon = DshIcons.Check,
                             iconTone = ChipTone.Ok,
-                            onClick = {},
                         )
                         if (i != plugin.capabilities.lastIndex) DshDivider()
                     }
@@ -1327,7 +1420,7 @@ fun S23MarketInstalled(
                 Box(Modifier.width(1.dp).height(24.dp).background(c.line))
                 StatCell("0", "未生效", c.danger)
                 Spacer(Modifier.weight(1f))
-                DshChip("全部更新", tone = ChipTone.Brand, enabled = installed.isNotEmpty(), onClick = {})
+                DshChip("全部更新", tone = ChipTone.Brand, enabled = false)
             }
             Spacer(Modifier.height(11.dp))
 
@@ -1475,13 +1568,22 @@ fun S23MarketInstalled(
                 text = "卸载（两步确认）",
                 icon = DshIcons.DeleteOutline,
                 tone = BtnTone.Ghost,
-                enabled = installed.isNotEmpty(),
+                enabled = false,
                 onClick = {},
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "「全部更新」与「卸载」需要 pnpm（本机未安装，dsh plugin 只是转发给 pnpm）。" +
+                    "在 Termux 里先 `pkg install nodejs-npm` 再装 pnpm 后，可用：" +
+                    "dsh plugin --profile acp add/remove <包名>",
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(12.dp))
         }
 
-        MktBar(2, onOpenInstalled = {}, onOpenThemes = onOpenThemes)
+        MktBar(2, onOpenInstalled = {}, onOpenThemes = onOpenThemes, onOpenDiscover = onOpenDiscover)
     }
 }
 

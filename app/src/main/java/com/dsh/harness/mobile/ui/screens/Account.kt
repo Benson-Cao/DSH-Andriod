@@ -1335,3 +1335,136 @@ private fun buildNoteText(text: String, boldPrefix: String?, boldColor: Color): 
     }
 }
 
+
+// ============================ S36 充值 ============================
+/**
+ * S36 充值（v30.9 新增，此前设计稿有此屏但实现缺失，S32 的「充值」按钮是死路）。
+ *
+ * ⚠️ **诚实实现**：本 App 不接入 DeepSeek 账号体系，是拿用户的 API Key 直连官方 API，
+ * 官方按 token 计费、**不向客户端下发账户余额**。所以设计稿里的「余额卡 ¥4.08 /
+ * 金额三档 / 微信·支付宝支付 / 到账预览」在本 App 里**没有真实数据源**，
+ * 画出来就是假账。按项目的既定原则：不造假数据、不做点了没反应的控件，
+ * 因此本屏只做三件真事：
+ *   1. 说清计费真实链路（Key → 官方 API → 官方账单）；
+ *   2. 给真动作：跳官方充值页 platform.deepseek.com/top_up；
+ *   3. 若本机还没配 Key，先引导去 S14 录密钥（充值之前必须先有 Key）。
+ */
+@Composable
+fun S36TopUp(
+    modifier: Modifier = Modifier,
+    onBack: () -> Unit,
+    onOpenPlatform: () -> Unit = {},
+    keyConfigured: Boolean = false,
+    onOpenApiKey: () -> Unit = {},
+) {
+    val c = DshTheme.colors
+
+    DshScreen(modifier) {
+        DshNavBar(onBack = onBack, title = "充值", stacked = true)
+
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Space.lg)
+                .padding(top = 13.dp),
+        ) {
+            // —— 真实计费形态卡 ——
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(c.card)
+                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                    .padding(14.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(DshIcons.Info, null, Modifier.size(16.dp), tint = c.brand)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "本 App 按 API 用量计费，没有账户余额",
+                        style = Type.sec,
+                        color = c.ink,
+                    )
+                }
+                Spacer(Modifier.height(9.dp))
+                Text(
+                    "充值不是充进 App，而是充值到官方平台账户；之后本 App 用你的 API Key 直连官方 API，" +
+                        "官方按实际 token 用量扣费，账单在平台侧查看。",
+                    style = Type.meta.copy(lineHeight = 18.5.sp),
+                    color = c.ink2,
+                )
+                Spacer(Modifier.height(11.dp))
+                listOf(
+                    "① 在官方平台充值 → platform.deepseek.com/top_up",
+                    "② 在本 App「设置 → 模型 → API 密钥」录入该 Key",
+                    "③ 之后每次调用由官方直接扣费，App 只展示真实用量",
+                ).forEach {
+                    Text(
+                        it,
+                        style = Type.meta.copy(lineHeight = 19.sp),
+                        color = c.ink2,
+                        modifier = Modifier.padding(bottom = 3.dp),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(11.dp))
+
+            // —— 本机 Key 状态（真实状态，不是设计稿假数据）——
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(if (keyConfigured) c.okSoft() else c.warnSoft())
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    if (keyConfigured) DshIcons.Check else DshIcons.Warning,
+                    null,
+                    Modifier.size(16.dp),
+                    tint = if (keyConfigured) c.ok else c.warn,
+                )
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (keyConfigured) "本机已配置 API 密钥" else "本机还没有配置 API 密钥",
+                        style = Type.sec,
+                        color = c.ink,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        if (keyConfigured) "可以直接开始对话，费用从平台余额扣。"
+                        else "先录入 Key 才能调用模型。",
+                        style = Type.meta,
+                        color = c.ink2,
+                    )
+                }
+                if (!keyConfigured) {
+                    Spacer(Modifier.width(8.dp))
+                    DshChip("去录入", tone = ChipTone.Warn, mini = true, onClick = onOpenApiKey)
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            DshBtn(
+                text = "前往官方平台充值",
+                icon = DshIcons.OpenInNew,
+                modifier = Modifier.fillMaxWidth(),
+                height = 44.dp,
+                onClick = onOpenPlatform,
+            )
+            Spacer(Modifier.height(9.dp))
+            Text(
+                "充值入口为 DeepSeek 官方平台网页；本 App 不代收资金、不接入任何支付渠道，" +
+                    "也无法读取或展示平台侧余额。",
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}

@@ -41,6 +41,9 @@ object DshProviders {
         return File(dir, "providers.json")
     }
 
+    /** 真实落盘路径，供 UI「复制配置路径」用（v30.9）。 */
+    fun providersFile(ctx: Context): File = file(ctx)
+
     fun list(ctx: Context): List<Provider> {
         val f = file(ctx)
         if (!f.exists()) return emptyList()

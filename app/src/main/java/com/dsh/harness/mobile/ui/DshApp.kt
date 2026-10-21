@@ -93,6 +93,7 @@ sealed interface Route {
     data object S32AccountLoggedOut : Route  // 账号与余额 · 未登录
     data object S33AgentPresets : Route      // Agent 预设列表
     data object S35Usage : Route             // 用量与账单明细
+    data object S36TopUp : Route             // 充值（v30.9 新增：诚实说明 + 跳官方充值页）
     data object S37ApiKeyConfigured : Route  // API 密钥 · 已配置态
     data object S39ProviderEdit : Route      // 编辑模型提供方
     data object S40NewTask : Route           // 新建自动化任务
@@ -603,6 +604,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onSearch = { nav.go(Route.S45GlobalSearch) },
                         onAddWorkspace = { nav.go(Route.S41PickFolder) },
                         onOpenGitCommit = { nav.go(Route.S47GitCommit) },
+                        onOpenArchived = { nav.go(Route.S48Archived) },
                     )
 
                     Route.S12Plugins -> S12Plugins(
@@ -779,7 +781,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     Route.S32AccountLoggedOut -> S32AccountLoggedOut(
                         onBack = { nav.backOrHome() },
                         onLogin = { nav.go(Route.S31AccountLogin) },
-                        onTopUpBlocked = { toast = "此版本不提供充值" },
+                        onTopUpBlocked = { nav.go(Route.S36TopUp) },
                         onUsage = { nav.go(Route.S35Usage) },
                         onAddProvider = { nav.go(Route.S25Provider) },
                     )
@@ -806,6 +808,23 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         sessionCount = sessions.size,
                         modelName = modelName,
                         thinking = thinking,
+                    )
+
+                    // v30.9：S36 充值。诚实实现 —— 本 App 以 API Key 直连官方 API 计费，
+                    // 没有账户余额体系，所以不做假金额/假支付，只给边界说明 + 跳官方充值页。
+                    Route.S36TopUp -> S36TopUp(
+                        onBack = { nav.backOrHome() },
+                        onOpenPlatform = {
+                            val u = android.net.Uri.parse("https://platform.deepseek.com/top_up")
+                            runCatching {
+                                ctx.startActivity(
+                                    android.content.Intent(android.content.Intent.ACTION_VIEW, u)
+                                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }.onFailure { toast = "无法打开浏览器" }
+                        },
+                        keyConfigured = apiKey.configured,
+                        onOpenApiKey = { nav.go(Route.S14ApiKey) },
                     )
 
                     Route.S37ApiKeyConfigured -> S37ApiKeyConfigured(
