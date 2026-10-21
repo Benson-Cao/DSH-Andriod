@@ -30,7 +30,11 @@ import com.dsh.harness.mobile.ui.screens.TrajectoryEvent
  */
 class DshViewModel(app: Application) : AndroidViewModel(app) {
 
-    companion object { private const val TAG = "DshVM" }
+    companion object {
+        private const val TAG = "DshVM"
+        /** ACP thought_level 选项里「跟随模型默认」的哨兵值（dsh-acp: PROVIDER_DEFAULT_REASONING_VALUE） */
+        const val PROVIDER_DEFAULT_REASONING = "provider-default"
+    }
 
     private val client = DshAcpClient(app)
 
@@ -72,6 +76,14 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
     val sessions: StateFlow<List<Session>> = _sessions
 
     /**
+     * session/list 是否真的成功取到过。
+     * v30.9：S48 归档页要区分「没有会话」与「进程没起来读不到」——
+     * 空列表 + false 是后者的诚实空态，不能画成"暂无归档"。
+     */
+    private val _sessionsLoaded = MutableStateFlow(false)
+    val sessionsLoaded: StateFlow<Boolean> = _sessionsLoaded
+
+    /**
      * S8 轨迹用：把 session/update 的事件按时间顺序攒成时间线。
      * ACP 不支持历史回放，所以这里只记录**本次会话**的事件（进程内累积）。
      */
@@ -102,15 +114,36 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _modelName = MutableStateFlow("DeepSeek-V4-Flash")
     val modelName: StateFlow<String> = _modelName
-    private val _thinking = MutableStateFlow("High")
+    // v30.9：值统一为 ACP reasoning_effort 真值（off/low/high/max，小写），
+    // 因为回传 session/set_config_option 时必须原样送。显示层用 thinkingLabel() 转中文。
+    private val _thinking = MutableStateFlow("high")
     val thinking: StateFlow<String> = _thinking
+
+    /**
+     * 当前模型真实支持的思考强度档位（来自 ACP configOptions 的 category=="thought_level"）。
+     * 真值：DeepSeek 的 reasoning effort 硬校验只有 off/low/high/max 四档
+     * （dsh-llm-deepseek/lib/index.js reasoningEffort()，其他值直接抛 UNSUPPORTED_REASONING_EFFORT），
+     * 且**每个模型可不同**（模型不声明 reasoning 时该项整个不出现）。
+     * 拿不到时回落四档，不拿设计稿的「低/中/高」充数（「中」不是真档位）。
+     */
+    private val _thinkingLevels = MutableStateFlow(listOf("off", "low", "high", "max"))
+    val thinkingLevels: StateFlow<List<String>> = _thinkingLevels
+    private val _thinkingLevelsKnown = MutableStateFlow(false)
+    val thinkingLevelsKnown: StateFlow<Boolean> = _thinkingLevelsKnown
     private val _autoModel = MutableStateFlow(false)
     val autoModel: StateFlow<Boolean> = _autoModel
 
-    /** S29：单纯更新显示态（含自定义提供方等占位模型，不下发到真实引擎） */
+    /**
+     * S29：单纯更新显示态（含自定义提供方等占位模型，不下发到真实引擎）。
+     * v30.9：thinking 是 ACP 真值 off/low/high/max；保存时若会话活着也顺手下发，
+     * 让「默认模型与思考强度」不只改显示。
+     */
     fun setModelDisplay(name: String, thinking: String) {
         _modelName.value = name
         _thinking.value = thinking
+        if (client.isActive()) {
+            viewModelScope.launch { client.setConfigOption("reasoning_effort", thinking) }
+        }
     }
     fun setAutoModel(on: Boolean) { _autoModel.value = on }
 
@@ -424,6 +457,20 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun parseConfigOptions() {
         val arr = client.configOptions()
+        val levels = ArrayList<String>()
+        for (i in 0 until arr.length()) {
+            val opt = arr.optJSONObject(i) ?: continue
+            if (opt.optString("category") != "thought_level") continue
+            val opts = opt.optJSONArray("options") ?: continue
+            for (k in 0 until opts.length()) {
+                val v = opts.optJSONObject(k)?.optString("value") ?: continue
+                if (v.isNotEmpty() && v != PROVIDER_DEFAULT_REASONING) levels.add(v)
+            }
+        }
+        if (levels.isNotEmpty()) {
+            _thinkingLevels.value = levels
+            _thinkingLevelsKnown.value = true
+        }
         val out = ArrayList<ModelOption>()
         for (i in 0 until arr.length()) {
             val opt = arr.optJSONObject(i) ?: continue
@@ -462,8 +509,10 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
             val arr = client.listSessions(cwd)
             if (arr == null) {
                 _sessions.value = emptyList()
+                _sessionsLoaded.value = false
                 return@launch
             }
+            _sessionsLoaded.value = true
             val list = ArrayList<Session>(arr.length())
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue

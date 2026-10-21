@@ -62,14 +62,26 @@ fun S30ModelDefault(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     currentModel: String = "DeepSeek-V4-Flash",
-    currentThinking: String = "High",
+    /** v30.9：ACP reasoning_effort 真值（off/low/high/max 小写），不再是 "High" 这类显示名 */
+    currentThinking: String = "high",
+    /** v30.9：当前模型真实支持的档位（ACP configOptions → category=="thought_level"） */
+    thinkingLevels: List<String> = listOf("off", "low", "high", "max"),
     onSave: (model: String, thinking: String) -> Unit = { _, _ -> },
     onRestoreDefault: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var provider by remember { mutableStateOf(0) } // 0=DeepSeek 账号 1=自定义提供方
+    // v30.9：真四档。DeepSeek 硬校验只有 off/low/high/max（dsh-llm-deepseek
+    // reasoningEffort()，其他值抛 UNSUPPORTED_REASONING_EFFORT），且每模型可不同。
+    // 显示走 thinkingLabel()（中文），回传保留小写真值。
+    val levels = thinkingLevels
     var model by remember { mutableStateOf(currentModel) }
-    var thinking by remember { mutableStateOf(currentThinking) }
+    var thinking by remember {
+        mutableStateOf(
+            levels.elementAtOrNull(levels.indexOf(currentThinking))
+                ?: levels.elementAtOrNull(levels.indexOf("high")) ?: "high",
+        )
+    }
     var scope by remember { mutableStateOf(0) } // 0=仅新会话 1=所有会话
 
     val deepseekModels = listOf(
@@ -81,7 +93,6 @@ fun S30ModelDefault(
         S30Model("minimax-m3", "bailian · 目录内", needKey = true),
     )
     val models = if (provider == 0) deepseekModels else customModels
-    val levels = listOf("Off", "Low", "High", "Max")
 
     DshScreen(modifier) {
         DshNavBar(onBack = onBack, title = "默认模型与思考强度", stacked = true)
@@ -160,10 +171,11 @@ fun S30ModelDefault(
 
             Spacer(Modifier.height(14.dp))
             DshFieldGroup(label = "思考强度") {
-                DshSeg(levels, levels.indexOf(thinking).coerceAtLeast(0)) { thinking = levels[it] }
+                DshSeg(levels.map { thinkingLabel(it) }, levels.indexOf(thinking).coerceAtLeast(0)) { thinking = levels[it] }
                 Text(
-                    "手动录入的模型需先在 设置 → 模型 → 编辑提供方 → 模型选项 → 推理等级 声明档位，" +
-                        "否则这里置灰，是否思考由服务端默认行为决定。",
+                    "档位来自当前模型的真实声明（off / low / high / max 四档，不同模型可不同）。" +
+                        "手动录入的模型需先在 设置 → 模型 → 编辑提供方 → 模型选项 → 推理等级 声明档位，" +
+                        "否则模型不声明 reasoning，这里只显示默认值。",
                     style = Type.meta.copy(lineHeight = 16.8.sp),
                     color = c.ink3,
                     modifier = Modifier.padding(top = 6.dp),
@@ -550,6 +562,10 @@ fun S33AgentPresets(
     onEditPreset: () -> Unit = {},
     onUsePreset: () -> Unit = {},
     onDuplicate: () -> Unit = {},
+    /** v30.9：当前 preset 真值（dsh-agent-presets 的 config.default） */
+    activePreset: String = "standard",
+    /** v30.9：用户自建 preset 真实列表（`<dshHome>/.agent-presets`） */
+    userPresets: List<com.dsh.harness.mobile.data.DshPresets.UserPreset> = emptyList(),
 ) {
     val c = DshTheme.colors
 
@@ -570,7 +586,7 @@ fun S33AgentPresets(
         ) {
             Spacer(Modifier.height(12.dp))
 
-            DshSecTitle("内置", note = "4 个", modifier = Modifier.padding(top = 0.dp))
+            DshSecTitle("内置", note = "4 个 · 来自 dsh-agent-presets", modifier = Modifier.padding(top = 0.dp))
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -615,48 +631,94 @@ fun S33AgentPresets(
                 )
             }
 
-            DshSecTitle("我的预设", note = "1 个")
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .padding(horizontal = 13.dp, vertical = 12.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+            DshSecTitle(
+                "我的预设",
+                note = "${userPresets.size} 个 · ~/.agent-presets",
+                modifier = Modifier.padding(top = 0.dp),
+            )
+            if (userPresets.isEmpty()) {
+                // v30.9：此前这里画的是设计稿示意 preset（web-dev-standard），本机并不存在。
+                // 改为真实空态：说明自定义 preset 的落点与创建方式，不拿假名充数。
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                        .padding(13.dp),
                 ) {
+                    Text("暂无自定义预设", style = Type.sec, color = c.ink)
+                    Spacer(Modifier.height(6.dp))
                     Text(
-                        "web-dev-standard",
-                        style = Type.rowTitle.copy(fontWeight = FontWeight.SemiBold),
-                        color = c.ink,
+                        "自定义 preset 放在 <dshHome>/.agent-presets/<名字>/ 下，" +
+                            "每个目录含 preset.yml（name / description）与 agent.cordis.yml（插件装配清单）。" +
+                            "本机该目录为空或未创建。",
+                        style = Type.meta.copy(lineHeight = 18.sp),
+                        color = c.ink3,
                     )
-                    DshChip("复制自 standard", mini = true)
+                    Spacer(Modifier.height(9.dp))
+                    DshBtn(
+                        "新建预设",
+                        icon = DshIcons.Add,
+                        small = true,
+                        tone = BtnTone.Ghost,
+                        onClick = onNewPreset,
+                    )
                 }
-                Text(
-                    "差异：关闭 subagent 并发、bash 每次需审批、预置 AGENTS.md 模板。",
-                    style = Type.meta.copy(lineHeight = 18.sp),
-                    color = c.ink3,
-                    modifier = Modifier.padding(top = 5.dp),
-                )
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    DshBtn(
-                        "用于新会话",
-                        small = true,
-                        tone = BtnTone.Ghost,
-                        modifier = Modifier.weight(1f),
-                        onClick = onUsePreset,
-                    )
-                    DshBtn(
-                        "再复制一份",
-                        small = true,
-                        tone = BtnTone.Ghost,
-                        modifier = Modifier.weight(1f),
-                        onClick = onDuplicate,
-                    )
+            } else {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                        .padding(horizontal = 13.dp, vertical = 12.dp),
+                ) {
+                    userPresets.forEachIndexed { i, p ->
+                        if (i > 0) DshDivider()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    p.displayName,
+                                    style = Type.rowTitle.copy(fontWeight = FontWeight.SemiBold),
+                                    color = c.ink,
+                                )
+                                Text(
+                                    p.id,
+                                    style = Type.meta.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                                    color = c.ink3,
+                                )
+                            }
+                            if (p.id == activePreset) {
+                                DshChip("当前使用", tone = ChipTone.Brand, mini = true)
+                            }
+                        }
+                        if (p.description.isNotEmpty()) {
+                            Text(
+                                p.description,
+                                style = Type.meta.copy(lineHeight = 18.sp),
+                                color = c.ink3,
+                                modifier = Modifier.padding(top = 5.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(9.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                            DshBtn(
+                                "用于新会话",
+                                small = true,
+                                tone = BtnTone.Ghost,
+                                modifier = Modifier.weight(1f),
+                                onClick = onUsePreset,
+                            )
+                            DshBtn(
+                                "再复制一份",
+                                small = true,
+                                tone = BtnTone.Ghost,
+                                modifier = Modifier.weight(1f),
+                                onClick = onDuplicate,
+                            )
+                        }
+                    }
                 }
             }
 

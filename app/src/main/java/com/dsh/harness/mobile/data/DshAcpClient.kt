@@ -77,6 +77,9 @@ class DshAcpClient(private val context: Context) {
     private var sessionId: String? = null
     private var process: Process? = null
 
+    /** v30.9：会话是否活着（供 UI 判断"下发 config 选项"是否可达） */
+    fun isActive(): Boolean = _phase.value == Phase.Ready && sessionId != null
+
     @Volatile
     private var reader: BufferedReader? = null
 

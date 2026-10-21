@@ -38,6 +38,25 @@ import com.dsh.harness.mobile.ui.theme.*
  * 布局：标题 6% ｜ 模式 2×2 网格 30%(每卡 88px) ｜ 权限三段 8% ｜ 说明 5%
  *      ｜ 模型列表 18% ｜ 思考强度 8% ｜ 开始按钮 7%
  *   "模式卡文字两行截断，不撑破网格"
+ *
+ * ⚠️ **v30.9 三处诚实化修正（拍板结论，均有 dsh 源码依据）**：
+ * 1. **模式卡从"可选"改为"只读展示当前 preset"**：dsh 的 preset 是
+ *    standard/ptc/minimal/cordis 四个（`dsh-agent-presets/presets/` 下各目录的 `preset.yml` 的
+ *    name 即「标准/PTC/极简/创造」），但 **ACP 没有注册 `session/set_mode`**
+ *    （dsh-acp/lib/index.js 只注册 new/list/resume/close/setConfigOption/prompt/cancel），
+ *    所以模式**无法在会话内切换**，只能由 Profile 装配决定。画成 4 张可点卡片
+ *    等于点了没反应 → 改为不可点的只读态 + 说明。
+ * 2. **「极简」的描述被设计稿写歪了**：设计稿写"只给结果，不展示过程"，那是"输出详细度"；
+ *    真语义是 minimal preset = "仅提供持久 shell 的单工具编码 Agent"
+ *    （`presets/minimal/preset.yml`）。已改为真实描述。
+ * 3. **思考强度档位统一为真实四档**：DeepSeek 硬校验只有 off/low/high/max
+ *    （`dsh-llm-deepseek/lib/index.js` reasoningEffort()，其他值抛
+ *    UNSUPPORTED_REASONING_EFFORT），且**每个模型可不同**（由模型自己的 reasoning.efforts 决定）。
+ *    原「低/中/高」里的"中"不是真档位、且缺 Max → 改为按 [thinkingLevels] 动态渲染，
+ *    拿不到真实列表时回落四档。
+ * 4. **权限档位中英混用 → 统一中文**，并说明真实机制：ACP 只有
+ *    `session/request_permission`（allow-once / reject-once）**逐个审批**，
+ *    没有"三档权限"概念；这三档是预设声明的能力边界，不是 ACP 能力。
  */
 @Composable
 fun BoxScope.S9NewSessionSheet(
@@ -47,20 +66,28 @@ fun BoxScope.S9NewSessionSheet(
     /** 来自 ACP session/new 返回的真实模型目录；为空时退回设计稿演示项 */
     liveModels: List<com.dsh.harness.mobile.data.DshViewModel.ModelOption> = emptyList(),
     onPickModel: (String) -> Unit = {},
+    /** v30.9：当前真实 preset（dsh 侧装配结果），只读展示 */
+    currentPreset: String = "standard",
+    /** v30.9：当前模型真实支持的思考强度档位（ACP configOptions → category=="thought_level"） */
+    thinkingLevels: List<String> = listOf("off", "low", "high", "max"),
+    thinkingLevelsKnown: Boolean = false,
+    onPickThinking: (String) -> Unit = {},
 ) {
     val c = DshTheme.colors
-    var mode by remember { mutableStateOf("标准") }
     var perm by remember { mutableStateOf(1) }
     var model by remember { mutableStateOf(0) }
-    var think by remember { mutableStateOf(1) }
 
-    val modes = listOf(
-        Triple("标准", "按需规划，过程与结论都给", DshIcons.Build),
-        Triple("PTC", "程序化思考，复杂计算更稳", DshIcons.Psychology),
-        Triple("极简", "只给结果，不展示过程", DshIcons.FilterNone),
-        Triple("创造", "发散探索，给多个方向", DshIcons.AutoAwesome),
+    // v30.9：四个 preset 是 dsh 真值（dsh-agent-presets/presets/*/preset.yml）。
+    // **只读展示，不可点** —— ACP 未提供 session/set_mode，选了也不会生效。
+    val presets = listOf(
+        S9Preset("standard", "标准模式", "功能完整的编码 Agent：文件编辑、Shell、检索、Skills、计划、子代理", DshIcons.Build),
+        S9Preset("ptc", "PTC 模式", "用一段 TypeScript 程序组合多步操作，默认不提供 workflow", DshIcons.Psychology),
+        S9Preset("minimal", "极简模式", "仅提供持久 Shell 的单工具编码 Agent", DshIcons.FilterNone),
+        S9Preset("cordis", "创造模式", "用于创建自定义 Agent preset，含运行时检查与插件实验", DshIcons.AutoAwesome),
     )
-    val perms = listOf("Read Only", "Workspace Write", "Full Access")
+    // v30.9：权限档位统一中文。真实机制是越界操作逐个弹审批（session/request_permission），
+    // 这三档是预设声明的能力边界，不是 ACP 的权限开关。
+    val perms = listOf("只读", "工作区写入", "完整访问")
     // 设计稿的演示项；ACP 通了以后用真实目录替换
     val models = if (liveModels.isNotEmpty()) {
         liveModels.map { it.name to (it.value to it.group) }
@@ -71,7 +98,8 @@ fun BoxScope.S9NewSessionSheet(
             "V4-Pro Max" to ("" to "deepseek-official"),
         )
     }
-    val thinks = listOf("低", "中", "高")
+    // v30.9：真实四档（off/low/high/max），不再用设计稿的「低/中/高」。
+    val thinks = thinkingLevels.map { lv -> thinkingLabel(lv) }
 
     DshSheet(
         visible = visible,
@@ -81,28 +109,40 @@ fun BoxScope.S9NewSessionSheet(
         content = {
             // —— 模式 2×2，每卡 88 高 ——
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                modes.chunked(2).forEach { row ->
+                presets.chunked(2).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { (name, desc, icon) ->
+                        row.forEach { preset ->
+                            val (id, name, desc, icon) = preset
                             ModeCard(
                                 name = name,
                                 desc = desc,
                                 icon = icon,
-                                selected = mode == name,
+                                selected = currentPreset == id,
                                 modifier = Modifier.weight(1f),
-                            ) { mode = name }
+                                onClick = null,
+                            )
                         }
                     }
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "模式（preset）由 Profile 装配决定，当前为「" +
+                    (presets.firstOrNull { it.id == currentPreset }?.name ?: currentPreset) +
+                    "」；ACP 协议未提供会话内切换 preset 的能力，因此这里只读。",
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             Spacer(Modifier.height(14.dp))
             DshSecTitle("权限档位", Modifier.padding(top = 0.dp))
             DshSeg(perms, perm) { perm = it }
             Spacer(Modifier.height(8.dp))
             Text(
-                "权限决定 Agent 能在哪些地方读写与执行命令；越界操作会先弹审批。",
-                style = Type.meta.copy(lineHeight = 17.6.sp),
+                "这三档是预设声明的能力边界，不是 ACP 的权限开关；协议层面的真实机制是越界操作" +
+                    "逐个弹审批（允许一次 / 拒绝），由你在会话里逐次决定。",
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
                 color = c.ink3,
             )
 
@@ -140,15 +180,39 @@ fun BoxScope.S9NewSessionSheet(
 
             Spacer(Modifier.height(14.dp))
             DshSecTitle("思考强度", Modifier.padding(top = 0.dp))
-            DshSeg(thinks, think) { think = it }
+            // v30.9：真四档 + 选中即回传（VM.selectThinking → session/set_config_option）。
+            // 切换模型时档位可能变（每模型 reasoning.efforts 不同），所以 remember 带 keys 重置。
+            var think by remember(currentPreset, thinkingLevels) {
+                mutableStateOf(thinkingLevels.indexOf("high").coerceAtLeast(0))
+            }
+            DshSeg(thinks, think) { i ->
+                think = i
+                onPickThinking(thinkingLevels[i])
+            }
+            Text(
+                if (thinkingLevelsKnown) {
+                    "档位来自当前模型的真实声明（off / low / high / max 四档，" +
+                        "不同模型可不同）；选中后立即对后续轮次生效。"
+                } else {
+                    "未能从模型读到真实档位，暂按 off / low / high / max 四档显示；" +
+                        "实际支持范围以模型为准。"
+                },
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
         },
         footer = {
-            DshBtn("开始会话", onClick = { onStart(mode) })
+            DshBtn("开始会话", onClick = { onStart(currentPreset) })
         },
     )
 }
 
-/** 模式卡：设计稿 166×88，文字两行截断 */
+/**
+ * 模式卡：设计稿 166×88，文字两行截断。
+ * v30.9：[onClick] 传 null 表示**只读态**（当前 preset 不可切换，ACP 无 session/set_mode）：
+ * 去掉 clickable、去掉阴影/按压反馈，避免做成"看起来能点其实点了没反应"。
+ */
 @Composable
 private fun ModeCard(
     name: String,
@@ -156,7 +220,7 @@ private fun ModeCard(
     icon: ImageVector,
     selected: Boolean,
     modifier: Modifier = Modifier,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
 ) {
     val c = DshTheme.colors
     Column(
@@ -169,7 +233,7 @@ private fun ModeCard(
                 if (selected) c.brand else c.line,
                 RoundedCornerShape(Radius.xl),
             )
-            .clickable { onClick() }
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -188,6 +252,28 @@ private fun ModeCard(
         Spacer(Modifier.height(6.dp))
         Text(desc, style = Type.meta.copy(lineHeight = 15.sp), color = c.ink3, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
+}
+
+/** v30.9：S9 的一个 preset 条目（dsh 真值，见文件头注释）。 */
+private data class S9Preset(
+    val id: String,
+    val name: String,
+    val desc: String,
+    val icon: ImageVector,
+)
+
+/**
+ * v30.9：思考强度档位的中文显示名。
+ * 真值是 ACP reasoning_effort 的 off / low / high / max（DeepSeek 硬校验这四档，
+ * 见 dsh-llm-deepseek/lib/index.js reasoningEffort()）；"medium" 之类的值不是真档位。
+ */
+internal fun thinkingLabel(level: String): String = when (level) {
+    "off" -> "关"
+    "low" -> "低"
+    "high" -> "高"
+    "max" -> "最高"
+    "provider-default" -> "跟随模型"
+    else -> level
 }
 
 // ============================ S10 斜杠指令面板 ============================

@@ -614,6 +614,8 @@ fun S43AddModel(
         Triple("Off", "enable_thinking=false", ChipTone.Neutral),
         Triple("Low", "thinking_budget=1024", ChipTone.Neutral),
         Triple("High", "thinking_budget=8192", ChipTone.Neutral),
+        // v30.9：补 Max —— DeepSeek 真四档 off/low/high/max（dsh-llm-deepseek reasoningEffort()）
+        Triple("Max", "thinking_budget=32768", ChipTone.Neutral),
     )
     var customMappings by remember { mutableStateOf(listOf<Triple<String, String, ChipTone>>()) }
     var newLabel by remember { mutableStateOf("") }
@@ -1726,17 +1728,19 @@ fun S48Archived(
     onDeleteSelected: () -> Unit = {},
     onOpenSession: () -> Unit = {},
     onBackToDrawer: () -> Unit = {},
+    /** v30.9：真实归档会话（ACP session/list，按工作区分组） */
+    liveSessions: List<com.dsh.harness.mobile.data.DshViewModel.Session> = emptyList(),
+    /** v30.9：session/list 是否成功取到（false = 进程没起来，无法区分"没有"与"读不到"） */
+    liveSessionsLoaded: Boolean = false,
 ) {
     val c = DshTheme.colors
-    val defaultWs = listOf(
-        S48ArchivedSession("认识 DeepSeek Harness", "8-13 · 已思考 折叠 6 段"),
-        S48ArchivedSession("写一个贪吃蛇游戏", "8-14 · 极简模式"),
-        S48ArchivedSession("88 页论文翻译", "8-14 · PTC 模式"),
-    )
-    val dataWs = listOf(
-        S48ArchivedSession("零号项目相关 APP 运行状态设计", "9-02 · 含 2 个子代理"),
-        S48ArchivedSession("梳理接口文档并补充示例", "9-05 · 14 个文件变更"),
-    )
+
+    // v30.9：此前这里写死两组设计稿示意会话（"贪吃蛇游戏" / "88 页论文翻译"…）与
+    // 「27 个归档会话 · 共 41.2 MB」。ACP 的 session/list 能给真实列表（含 cwd 与 updatedAt），
+    // 因此改为按 cwd 分组渲染真实会话；进程没起来时给诚实空态，不拿假名充数。
+    val grouped: List<Pair<String, List<com.dsh.harness.mobile.data.DshViewModel.Session>>> =
+        remember(liveSessions) { liveSessions.groupBy { it.cwd }.toList().sortedBy { it.first } }
+    val totalCount = liveSessions.size
 
     DshScreen(modifier) {
         DshNavBar(
@@ -1767,7 +1771,8 @@ fun S48Archived(
             ) {
                 Icon(DshIcons.Inventory2, null, Modifier.size(15.dp), tint = c.brand)
                 Text(
-                    "27 个归档会话 · 共 41.2 MB",
+                    if (liveSessionsLoaded) "$totalCount 个会话 · 来自 ACP session/list"
+                    else "未读到会话列表（dsh 进程未就绪）",
                     style = Type.meta.copy(fontSize = 11.5.sp),
                     color = c.ink2,
                     modifier = Modifier.weight(1f),
@@ -1775,33 +1780,58 @@ fun S48Archived(
                 DshChip("导出全部", onClick = onExportAll)
             }
 
-            // —— 默认工作区（12）——
-            DshSecTitle("默认工作区", Modifier.padding(top = 11.dp), note = "12")
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-            ) {
-                defaultWs.forEachIndexed { i, s ->
-                    if (i > 0) DshDivider()
-                    S48ArchivedRow(s = s, onOpen = onOpenSession, onRestore = { onRestore(s.title) })
+            if (grouped.isEmpty()) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.xl))
+                        .background(c.card)
+                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                        .padding(14.dp),
+                ) {
+                    Text(
+                        if (liveSessionsLoaded) "当前没有会话记录" else "读不到会话列表",
+                        style = Type.sec,
+                        color = c.ink,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        if (liveSessionsLoaded) {
+                            "session/list 返回空。新会话产生第一条记录后，这里按工作区分组显示。"
+                        } else {
+                            "需要先让 dsh ACP 进程起来（回到首页发起一次对话即可），" +
+                                "之后本页按 cwd 分组列出真实会话。"
+                        },
+                        style = Type.meta.copy(lineHeight = 17.6.sp),
+                        color = c.ink3,
+                    )
                 }
-            }
-
-            // —— 数据分析项目（9）——
-            DshSecTitle("数据分析项目", note = "9")
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-            ) {
-                dataWs.forEachIndexed { i, s ->
-                    if (i > 0) DshDivider()
-                    S48ArchivedRow(s = s, onOpen = onOpenSession, onRestore = { onRestore(s.title) })
+            } else {
+                grouped.forEach { (cwd, items) ->
+                    DshSecTitle(
+                        cwd.substringAfterLast('/').ifEmpty { cwd },
+                        Modifier.padding(top = 11.dp),
+                        note = "${items.size}",
+                    )
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.xl))
+                            .background(c.card)
+                            .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
+                    ) {
+                        items.forEachIndexed { i, sess ->
+                            if (i > 0) DshDivider()
+                            S48ArchivedRow(
+                                s = S48ArchivedSession(
+                                    title = sess.title,
+                                    meta = sess.updatedAt,
+                                ),
+                                onOpen = onOpenSession,
+                                onRestore = { onRestore(sess.title) },
+                            )
+                        }
+                    }
                 }
             }
 

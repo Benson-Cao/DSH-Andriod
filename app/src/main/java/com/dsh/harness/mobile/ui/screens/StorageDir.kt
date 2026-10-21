@@ -157,6 +157,38 @@ fun S50StorageDir(
             }
 
             Spacer(Modifier.height(8.dp))
+
+            // —— 能力边界（v30.9 拍板：不做多目录架构改造，改为如实说明）——
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.xl))
+                    .background(c.soft)
+                    .padding(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(DshIcons.Info, null, Modifier.size(15.dp), tint = c.brand)
+                    Spacer(Modifier.width(8.dp))
+                    Text("当前版本支持单个外部目录", style = Type.sec, color = c.ink)
+                }
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    "多目录需要同时改持久层（[SafConfig] 现在是单值 tree_uri）、" +
+                        "本地代理的路由（按目录前缀分发请求）与 dsh 侧挂载配置，属架构改动而非界面补丁；" +
+                        "在它落地前，本页不画第二个目录占位。需要同时访问多个目录时，" +
+                        "用一个父目录授权即可覆盖其下所有子目录。",
+                    style = Type.meta.copy(lineHeight = 17.6.sp),
+                    color = c.ink2,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "这与 NAS 同步是两套独立能力：NAS 走 WebDAV / SMB / SFTP 同步 .dsh/storages/，" +
+                        "SAF 桥是把手机本地目录直接挂给 dsh 读写。",
+                    style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                    color = c.ink3,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
         }
     }
 }

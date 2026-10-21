@@ -187,9 +187,13 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     val messages by vm.messages.collectAsState()
     val tools by vm.tools.collectAsState()
     val sessions by vm.sessions.collectAsState()
+    val sessionsLoaded by vm.sessionsLoaded.collectAsState()
     val models by vm.models.collectAsState()
     val modelName by vm.modelName.collectAsState()
     val thinking by vm.thinking.collectAsState()
+    val thinkingLevels by vm.thinkingLevels.collectAsState()
+    val thinkingLevelsKnown by vm.thinkingLevelsKnown.collectAsState()
+
     val autoModel by vm.autoModel.collectAsState()
     val events by vm.events.collectAsState()
     val diagnostics by vm.diagnostics.collectAsState()
@@ -202,6 +206,18 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     val usageSamples by vm.usageSamples.collectAsState()
     val catalog by vm.catalog.collectAsState()
     val catalogLoading by vm.catalogLoading.collectAsState()
+
+    // v30.9：当前 preset 真值来自 `dsh --dump-config` 里 dsh-agent-presets 的 `default:`。
+    // ACP 不暴露 preset（没有 session/set_mode），这是本 App 能拿到 preset 的唯一真实来源；
+    // 读不到时回落 standard（该包的 config.default 是必填项，standard 是官方默认）。
+    val activePreset = remember(catalog) {
+        val raw = catalog.plugins
+            .firstOrNull { it.pkg.endsWith("dsh-agent-presets") }
+            ?.rawConfig
+            ?: ""
+        val re = java.util.regex.Pattern.compile("^\\s*default:\\s*([A-Za-z0-9_-]+)\\s*$", java.util.regex.Pattern.MULTILINE)
+        re.matcher(raw).takeIf { it.find() }?.group(1)?.takeIf { it.isNotBlank() } ?: "standard"
+    }
     val apiKey by vm.apiKey.collectAsState()
     val apiKeySaved by vm.apiKeySaved.collectAsState()
     // v24：社区市场精选目录（真实数据源 = npm 上的 dsh-plugin-catalog 包）
@@ -215,6 +231,15 @@ fun DshApp(startRoute: Route = Route.S3Home) {
     // 本机 $HOME/node_modules/@deepseek-ai/ 下没有 dshmarket → 市场本体未安装，
     // 于是市场插件列表为空、页面走安装引导，而不是拿设计稿的示意名充数。
     val ctx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+
+    // v30.9：用户自建 preset 真实列表（`<dshHome>/.agent-presets`）。
+    // 目录内容不会随会话变化，用 produceState 读一次即可（IO 在 Dispatchers.IO）。
+    val userPresets by produceState<List<com.dsh.harness.mobile.data.DshPresets.UserPreset>>(emptyList()) {
+        value = withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.dsh.harness.mobile.data.DshPresets.listUserPresets(ctx)
+        }
+    }
+
     // v30.7：NAS 重连 / 切回本地工作区要走后台线程（网络 IO），需要协程作用域
     val scope = rememberCoroutineScope()
     val marketInstalled = remember { DshMarketProbe.isInstalled(ctx) }
@@ -755,6 +780,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onBack = { nav.backOrHome() },
                         currentModel = modelName,
                         currentThinking = thinking,
+                        thinkingLevels = thinkingLevels,
                         onSave = { m, t ->
                             vm.setModelDisplay(m, t)
                             toast = "默认模型已设为 $m · $t"
@@ -792,6 +818,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onEditPreset = { toast = "预设编辑将在后续版本开放" },
                         onUsePreset = { nav.go(Route.S40NewTask) },
                         onDuplicate = { toast = "已复制预设副本" },
+                        activePreset = activePreset,
+                        userPresets = userPresets,
                     )
 
                     Route.S35Usage -> S35Usage(
@@ -929,6 +957,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onDeleteSelected = { toast = "删除需二次确认 · 演示页" },
                         onOpenSession = { nav.go(Route.S5ChatRunning) },
                         onBackToDrawer = { drawerOpen = true },
+                        liveSessions = sessions,
+                        liveSessionsLoaded = sessionsLoaded,
                     )
 
                     Route.S49NewTermuxSession -> S49NewTermuxSession(
@@ -991,6 +1021,10 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     onDismiss = { sheet = SheetKind.None },
                     liveModels = models,
                     onPickModel = { vm.selectModel(it) },
+                    currentPreset = activePreset,
+                    thinkingLevels = thinkingLevels,
+                    thinkingLevelsKnown = thinkingLevelsKnown,
+                    onPickThinking = { vm.selectThinking(it) },
                     onStart = {
                         sheet = SheetKind.None
                         nav.go(Route.S5ChatRunning)
