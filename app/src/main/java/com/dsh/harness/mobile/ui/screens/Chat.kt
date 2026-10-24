@@ -292,6 +292,15 @@ fun S5ChatRunning(
     onSend: (String) -> Unit,
     /** v30.8：本轮已结束且有回答 → 跳 S6 成果页（此前 S6 是孤儿路由，无任何入口） */
     onOpenResult: () -> Unit = {},
+    /**
+     * v22 修订版：引擎错误信息（VM.error，来自 ACP 的 error / 启动失败 / 发送失败）。
+     * 非 null 时在消息流末尾渲染「模型调用失败」卡。
+     */
+    errorText: String? = null,
+    /** v22 修订版：错误卡「重试」——重新发送上一条用户消息 */
+    onRetry: () -> Unit = {},
+    /** v22 修订版：错误卡「切换模型」→ S30 默认模型与思考强度 */
+    onSwitchModel: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var input by remember { mutableStateOf("") }
@@ -411,6 +420,20 @@ fun S5ChatRunning(
                     // ⚠️ 子代理与后台任务：ACP **没有**对应事件类型
                     //（协议表里只有 user/agent message、thought、tool_call、usage、config）。
                     // 所以这两块不再展示设计稿演示数据，等接上能力再开。
+
+                    // —— v22 修订版：模型调用失败卡 ——
+                    // 设计稿原文：danger 边框 + 6% danger 底，标题行（error 图标 / 红字 /
+                    // 右侧「N 次重试后」）+ 错误详情 + 「重试」「切换模型」两个 30px 小按钮。
+                    // ⚠️ 详情文案取 VM.error 的**真实文本**（429 / 无 API key / 连接失败…），
+                    // 不写死设计稿那句"429 Too Many Requests"——那只是一种情况。
+                    if (errorText != null) {
+                        S5ErrorCard(
+                            detail = errorText,
+                            onRetry = onRetry,
+                            onSwitchModel = onSwitchModel,
+                        )
+                        Spacer(Modifier.height(9.dp))
+                    }
 
                     // —— v30.8：本轮结束后给出「查看成果」入口（→ S6 成果页）——
                     if (!running && hasAnswer) {
@@ -729,4 +752,105 @@ private fun approvalBtnLabel(o: DshAcpClient.PendingPermission.PermissionOption)
     o.kind.contains("reject", true) -> "拒绝"
     o.kind.contains("allow", true) -> "本次允许"
     else -> o.name.ifEmpty { o.optionId }
+}
+
+/**
+ * v22 修订版：S5「模型调用失败」卡。
+ *
+ * 设计稿原文（`DeepSeekHarness手机端设计稿-v22.html`）：
+ * ```html
+ * <div class="card" style="padding:12px 13px;border-radius:14px;
+ *      border:1px solid rgba(229,72,72,.25);background:rgba(229,72,72,.06)">
+ *   <div class="row" style="margin-bottom:7px">
+ *     <i class="material-icons" style="font-size:16px;color:var(--danger)">error</i>
+ *     <span style="font-size:12.5px;font-weight:650;color:var(--danger)">模型调用失败</span>
+ *     <span style="flex:1"></span>
+ *     <span style="font-size:11px;color:var(--ink3)">2 次重试后</span>
+ *   </div>
+ *   <div style="font-size:11.5px;color:var(--ink2);line-height:1.6;margin-bottom:10px">
+ *     DeepSeek-V4-Flash 返回 429 Too Many Requests，API 密钥额度可能已用尽。</div>
+ *   <div style="display:flex;gap:7px">
+ *     <div class="btn sm" ...>重试</div>
+ *     <div class="btn sm ghost" data-goto="S30">切换模型</div>
+ *   </div>
+ * </div>
+ * ```
+ *
+ * 实现取舍：
+ * - 「2 次重试后」**不画** —— dsh 侧的重试次数没有通过 ACP 暴露给客户端，
+ *   写死一个数字就是假信息。右侧改放错误分类（见 [classifyErr]）。
+ * - 详情行用 [detail] 真实错误文本；为空时给一句兜底说明。
+ */
+@Composable
+private fun S5ErrorCard(
+    detail: String,
+    onRetry: () -> Unit,
+    onSwitchModel: () -> Unit,
+) {
+    val c = DshTheme.colors
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(c.danger.copy(alpha = 0.06f))
+            .border(1.dp, c.danger.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 13.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(DshIcons.Error, null, Modifier.size(16.dp), tint = c.danger)
+            Spacer(Modifier.width(7.dp))
+            Text(
+                "模型调用失败",
+                style = Type.meta.copy(fontSize = 12.5.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                color = c.danger,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                classifyErr(detail),
+                style = Type.meta.copy(fontSize = 11.sp),
+                color = c.ink3,
+            )
+        }
+        Spacer(Modifier.height(7.dp))
+        Text(
+            detail.ifBlank { "引擎未返回具体错误信息，可重试或查看轨迹了解析到哪一步。" },
+            style = Type.meta.copy(fontSize = 11.5.sp, lineHeight = 18.4.sp),
+            color = c.ink2,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            DshBtn(
+                "重试",
+                icon = DshIcons.Refresh,
+                small = true,
+                modifier = Modifier.weight(1f),
+                onClick = onRetry,
+            )
+            DshBtn(
+                "切换模型",
+                icon = DshIcons.Settings,
+                small = true,
+                tone = BtnTone.Ghost,
+                modifier = Modifier.weight(1f),
+                onClick = onSwitchModel,
+            )
+        }
+    }
+}
+
+/**
+ * 把真实错误文本归类成一句短标签（替代设计稿写死的「2 次重试后」）。
+ * dsh 不通过 ACP 上报重试次数，所以这里只做**文本特征分类**，不猜数字。
+ */
+private fun classifyErr(raw: String): String {
+    val t = raw.lowercase()
+    return when {
+        t.contains("429") || t.contains("rate limit") || t.contains("too many requests") -> "触发限流"
+        t.contains("no api key") || t.contains("api key") || t.contains("credentials") -> "密钥问题"
+        t.contains("timeout") || t.contains("timed out") -> "请求超时"
+        t.contains("refused") || t.contains("unreachable") || t.contains("connect") -> "连接失败"
+        t.contains("401") || t.contains("403") || t.contains("unauthorized") -> "鉴权失败"
+        t.contains("工作区") || t.contains("cwd") || t.contains("directory") -> "工作区问题"
+        else -> "引擎错误"
+    }
 }

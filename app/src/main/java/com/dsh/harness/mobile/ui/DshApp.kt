@@ -558,6 +558,14 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onOpenTrajectory = { nav.go(Route.S8Trajectory) },
                         onSend = { vm.send(it) },
                         onOpenResult = { nav.go(Route.S6ChatResult) },
+                        // v22 修订版：错误卡接 VM.error 真实文本；重试 = 重发上一条用户消息
+                        errorText = error,
+                        onRetry = {
+                            val last = messages.lastOrNull { it.role == DshViewModel.Role.User }?.text
+                            if (!last.isNullOrBlank()) vm.send(last)
+                            else toast = "没有可重试的消息"
+                        },
+                        onSwitchModel = { nav.go(Route.S30ModelDefault) },
                     )
 
                     Route.S6ChatResult -> S6ChatResult(
@@ -1165,7 +1173,8 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     drawerOpen = false
                     nav.go(if (apiKey.configured) Route.S15Account else Route.S32AccountLoggedOut)
                 },
-                onTermux = { drawerOpen = false; nav.go(Route.S27Termux) },
+                // v22 修订版：侧栏 Termux 行移除 → 改传 onExport（S46）；onTermux 不再由侧栏传
+                onExport = { drawerOpen = false; nav.go(Route.S46Export) },
                 onStorage = { drawerOpen = false; nav.go(Route.S50StorageDir) },
                 onArchived = { drawerOpen = false; nav.go(Route.S48Archived) },
                 liveSessions = sessions,

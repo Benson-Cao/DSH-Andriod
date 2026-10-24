@@ -229,7 +229,8 @@ fun DshIBtn(
     val c = DshTheme.colors
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val shape = RoundedCornerShape(9.dp)
+    // v22 修订版：`.ibtn` r9 → r8
+    val shape = RoundedCornerShape(8.dp)
 
     Box(
         modifier = modifier
@@ -516,14 +517,20 @@ fun DshCode(
 // ============================ 品牌标 ============================
 
 /**
- * 设计稿 .brandmark：22×22 r7 渐变方块 + "deepseek" + HARNESS 描边小标。
+ * 设计稿 .brandmark：**26px 手绘 SVG logo** + "Deepseek" + "Harness" 描边小标。
  * 这是 App 的品牌锚点，S3/S4/S18 顶栏都在用。
+ *
+ * ⚠️ v22 修订版（2026-10-24）变更：
+ * - logo 本体从「渐变圆角方块 + material-icons bolt」换成 [DshLogo] 的手绘 SVG
+ *   （一只带尾鳍和眼睛的蓝色鲸形，详见 [DshLogo] 文档里的设计稿原文）；
+ * - 文字大小写 `deepseek` / `HARNESS` → `Deepseek` / `Harness`；
+ * - 容器 22dp → 26dp，且**不再是渐变底**（透明容器，svg 占满）。
  */
 @Composable
 fun DshBrandmark(
     modifier: Modifier = Modifier,
-    name: String = "deepseek",
-    tag: String = "HARNESS",
+    name: String = "Deepseek",
+    tag: String = "Harness",
 ) {
     val c = DshTheme.colors
     Row(
@@ -531,17 +538,8 @@ fun DshBrandmark(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        Box(
-            Modifier
-                .size(22.dp)
-                .background(
-                    Brush.linearGradient(listOf(c.brand, c.purple)),
-                    RoundedCornerShape(7.dp),
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(DshIcons.Bolt, null, Modifier.size(13.dp), tint = Color.White)
-        }
+        // v22 修订版：26dp 透明容器 + 手绘 SVG（不再是渐变方块 + bolt 图标）
+        DshLogo(modifier = Modifier.size(26.dp))
         Text(name, style = Type.brandmark, color = c.ink)
         if (tag.isNotEmpty()) {
             Box(

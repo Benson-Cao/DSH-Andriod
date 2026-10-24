@@ -47,10 +47,15 @@ fun BoxScope.S4Drawer(
     onWorkspace: () -> Unit,
     onSettings: () -> Unit,
     onAccount: () -> Unit,
-    /** v14：本机 Termux 终端入口 */
-    onTermux: () -> Unit = {},
+    /**
+     * v22 修订版：**「本机服务 · Termux」入口从侧栏移除**。
+     * 设计稿把这一行删了（S27 不再是侧栏一级入口）。Termux 终端本身仍可用，
+     * 入口收回到 S14 设置页；这里不再重复占一个侧栏位。
+     */
     /** v30：SAF 存储目录桥入口 */
     onStorage: () -> Unit = {},
+    /** v22 修订版：新增「导出数据」→ S46 导出页 */
+    onExport: () -> Unit = {},
     /** v20：会话分组「已归档 · 全部」→ S48 归档管理 */
     onArchived: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -108,6 +113,19 @@ fun BoxScope.S4Drawer(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 6.dp),
         ) {
+            // v22 修订版：侧栏新增手势提示（设计稿 9.5px ink3 + swipe_left 图标）
+            Row(
+                Modifier.padding(start = 10.dp, top = 2.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(DshIcons.SwipeLeft, null, Modifier.size(11.dp), tint = c.ink3)
+                Text(
+                    "左滑会话可删除 / 归档",
+                    style = Type.meta.copy(fontSize = 9.5.sp),
+                    color = c.ink3,
+                )
+            }
             if (liveSessions.isNotEmpty()) {
                 // 真实数据：按 cwd 分组，与设计稿「按工作区分组」一致
                 GroupHeader("会话", more = liveSessions.size.toString())
@@ -186,12 +204,12 @@ fun BoxScope.S4Drawer(
                 )
             }
 
+            // v22 修订版：Termux 行已从侧栏移除（见 onTermux 注释）
             NavRow(
-                title = "本机服务 · Termux",
-                icon = DshIcons.Terminal,
-                selected = selectedNav == 4,
-                badge = "运行中",
-                onClick = onTermux,
+                title = "导出数据",
+                icon = DshIcons.FileDownload,
+                selected = false,
+                onClick = onExport,
             )
 
             NavRow(

@@ -45,16 +45,16 @@ object Space {
 }
 
 object Radius {
-    /** 8 —— 分段控件内项 */
+    /** 8 —— 分段控件内项；v22 修订版起也用于 chip（原 14） */
     val sm: Dp = 8.dp
-    /** 10 —— 折叠块、代码块、图标容器 */
+    /** 10 —— 折叠块、代码块、图标容器；v22 修订版起也用于次按钮（原 12）与选择卡（原 13） */
     val md: Dp = 10.dp
-    /** 12 —— 次按钮 */
-    val lg: Dp = 12.dp
-    /** 14 —— 列表卡 / chip / 设备卡 */
-    val xl: Dp = 14.dp
-    /** 22 —— Sheet 顶部圆角 */
-    val sheet: Dp = 22.dp
+    /** 10 —— 次按钮（v22 修订版：`.btn` r12 → r10） */
+    val lg: Dp = 10.dp
+    /** 12 —— 列表卡 / 设备卡（v22 修订版：`.card` r14 → r12） */
+    val xl: Dp = 12.dp
+    /** 16 —— Sheet 顶部圆角（v22 修订版：r22 → r16） */
+    val sheet: Dp = 16.dp
     /** 34 —— 设计稿机身圆角（真机上不存在，仅演示画板用） */
     val device: Dp = 34.dp
 
@@ -75,7 +75,14 @@ val IBTN: Dp = 32.dp
      * 视觉仍是 32dp，但触摸区 = 32 + 4×2 = 40dp。
      * 真机上只给 32dp 会导致顶部返回键几乎点不中（v10 复刻踩过）。
      */
-val IBTN_TOUCH_SLOP: Dp = 4.dp
+/**
+ * v22 修订版：图标按钮触摸区外扩量，4 → **6**。
+ * 设计稿 `.ibtn` 从"视觉 32、无最小触摸约束"改成
+ * `min-width:44px;min-height:44px;padding:6px` —— 视觉仍是 32，但**触摸区必须 44**。
+ * 44 是 Material 无障碍规范的最低触控目标，比我们原来的 40 更稳。
+ * 32 + 6×2 = 44。
+ */
+val IBTN_TOUCH_SLOP: Dp = 6.dp
     /** 开关 42×25 */
     val SW_W: Dp = 42.dp
     val SW_H: Dp = 25.dp

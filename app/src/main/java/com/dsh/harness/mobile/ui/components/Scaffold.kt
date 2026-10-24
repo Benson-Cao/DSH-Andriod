@@ -25,6 +25,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.dsh.harness.mobile.ui.theme.*
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 
 /**
  * 页面骨架三件套：状态栏占位 / 顶栏 / Bottom Sheet。
@@ -87,16 +89,26 @@ fun DshNavBar(
         }
         if (leading != null) leading()
         if (title != null) {
+            // v22 修订版：`.nav .ttl` 改为 **15px / 居中**（旧版是 16px 左对齐）。
+            // 用 weight(1f) 占满中间区 + textAlign.Center，而不是把整条 Row 居中 ——
+            // 否则左右两侧的返回键 / 动作区会被挤到不对称的位置。
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    style = Type.title,
+                    style = Type.title.copy(fontSize = 15.sp),
                     color = c.ink,
+                    textAlign = TextAlign.Center,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (subtitle != null) {
-                    Text(subtitle, style = Type.meta, color = c.ink3, maxLines = 1)
+                    Text(
+                        subtitle,
+                        style = Type.meta,
+                        color = c.ink3,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
                 }
             }
         } else if (leading == null && onBack == null) {
@@ -222,7 +234,11 @@ fun BoxScope.DshSheet(
                     .weight(1f, fill = true)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = Space.sheet),
+                    .padding(horizontal = Space.sheet)
+                    // v22 修订版：`.sh-b` 底部加 `env(safe-area-inset-bottom)`。
+                    // 真机上等价于 navigationBarsPadding —— 没有虚拟导航栏的设备
+                    // 这个 inset 是 0，不会平白多出一块空白。
+                    .windowInsetsBottomHeight(WindowInsets.navigationBars),
             ) {
                 content()
                 Spacer(Modifier.height(14.dp))
@@ -233,7 +249,8 @@ fun BoxScope.DshSheet(
                     Modifier
                         .fillMaxWidth()
                         .topLine(c.line)
-                        .padding(horizontal = Space.sheet, vertical = 12.dp),
+                        .padding(horizontal = Space.sheet, vertical = 12.dp)
+                        .windowInsetsBottomHeight(WindowInsets.navigationBars),
                 ) {
                     footer()
                 }

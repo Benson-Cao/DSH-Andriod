@@ -1,5 +1,11 @@
 package com.dsh.harness.mobile.ui.screens
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -87,7 +94,11 @@ fun BoxScope.S9NewSessionSheet(
     )
     // v30.9：权限档位统一中文。真实机制是越界操作逐个弹审批（session/request_permission），
     // 这三档是预设声明的能力边界，不是 ACP 的权限开关。
-    val perms = listOf("只读", "工作区写入", "完整访问")
+    // v22 修订版把权限档位文案从英文改成中文三态，与 S9 权限 Sheet 的原文一致：
+    //   仅可查看 / 工作区内修改 / 完全权限
+    // （我们 v30.9 拍板时用的是"只读/工作区写入/完整访问"，设计稿这版又细化了一档
+    //   语义——"工作区内修改"比"工作区写入"更准确：强调的是**范围**而非动作。）
+    val perms = listOf("仅可查看", "工作区内修改", "完全权限")
     // 设计稿的演示项；ACP 通了以后用真实目录替换
     val models = if (liveModels.isNotEmpty()) {
         liveModels.map { it.name to (it.value to it.group) }
@@ -406,11 +417,18 @@ fun S11Workspace(
     // v30：真实读取 SAF 授权态，并拉取已授权目录下的真实文件列表（IO 放到后台）
     val safOn = remember { SafConfig.isConfigured(ctx) }
     var safEntries by remember { mutableStateOf<List<SafTree.Entry>>(emptyList()) }
+    // v22 修订版：骨架屏的开关。safOn 且列表还没回来 = 正在后台拉取。
+    var safLoading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(safOn) {
-        safEntries = if (safOn) {
-            withContext(Dispatchers.IO) { SafTree.list(ctx, "") }
-        } else emptyList()
+        if (safOn) {
+            safLoading = true
+            safEntries = withContext(Dispatchers.IO) { SafTree.list(ctx, "") }
+            safLoading = false
+        } else {
+            safEntries = emptyList()
+            safLoading = false
+        }
     }
 
     DshScreen(modifier) {
@@ -497,7 +515,22 @@ fun S11Workspace(
                             iconTone = ChipTone.Brand,
                         )
                     }
-                    else -> DshEmpty("工作区里还没有文件", icon = DshIcons.FolderOpen)
+                    // v22 修订版：空工作区卡（设计稿新增，含「上传文件 / 新建」两个入口）
+                    // + 骨架屏加载态。⚠️ 设计稿把这两块画成了"示例卡"，我们按它本来的用途实现：
+                    //   骨架屏 = safOn 已授权但目录还在后台拉的**真实 loading 态**；
+                    //   空工作区卡 = 真的没有文件时的空态（含上传入口）。
+                    // 「新建」按钮置灰：本 App 没有"在工作区里新建文件"的写入口，
+                    // 画成能点却没反应违反项目的诚实原则。
+                    else -> Column {
+                        if (safLoading) {
+                            S11Skeleton()
+                        } else {
+                            S11EmptyWorkspace(
+                                onUpload = onAddWorkspace,
+                                onNew = null,
+                            )
+                        }
+                    }
                 }
 
                 // —— Git 变更：本 harness 无 Git 后端，诚实空态 ——
@@ -736,6 +769,166 @@ private fun TaskCard(
             DshChip("轨迹", icon = DshIcons.Timeline, mini = true)
             Spacer(Modifier.weight(1f))
             DshChip("日志", mini = true)
+        }
+    }
+}
+
+/**
+ * v22 修订版：S11「空工作区」卡。
+ *
+ * 设计稿原文（虚线边框 r12，居中排布）：
+ * ```html
+ * <div style="text-align:center;padding:20px 16px;margin-top:12px;
+ *             border:1px dashed var(--line);border-radius:12px">
+ *   <i class="material-icons" style="font-size:32px;color:var(--ink3);opacity:.5">folder_open</i>
+ *   <div style="font-size:13px;font-weight:600;color:var(--ink2);margin-top:8px">空工作区</div>
+ *   <div style="font-size:11.5px;color:var(--ink3);margin-top:4px;line-height:1.5">
+ *     还没有任何文件，上传或新建后<br>Agent 才能在工作区内读写</div>
+ *   <div style="display:flex;gap:7px;justify-content:center;margin-top:12px">
+ *     <div class="btn sm">上传文件</div><div class="btn sm ghost">新建</div>
+ *   </div>
+ * </div>
+ * ```
+ *
+ * 两个按钮都接**真实可达**的落地：[onUpload] 走 SAF 目录选择（S41/S50 那条链），
+ * [onNew] 由调用方决定（本 App 没有"在工作区里新建文件"的写入口，
+ * 所以调用方不给回调时这个按钮置灰并说明，不画成能点却没反应）。
+ */
+@Composable
+private fun S11EmptyWorkspace(
+    onUpload: () -> Unit,
+    onNew: (() -> Unit)?,
+) {
+    val c = DshTheme.colors
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(c.card)
+            .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+            .padding(horizontal = 16.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            DshIcons.FolderOpen, null,
+            Modifier.size(32.dp),
+            tint = c.ink3.copy(alpha = 0.5f),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "空工作区",
+            style = Type.sec.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+            color = c.ink2,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "还没有任何文件，上传或新建后\nAgent 才能在工作区内读写",
+            style = Type.meta.copy(fontSize = 11.5.sp, lineHeight = 17.3.sp),
+            color = c.ink3,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            DshBtn(
+                "上传文件",
+                icon = DshIcons.Upload,
+                small = true,
+                onClick = onUpload,
+            )
+            DshBtn(
+                "新建",
+                icon = DshIcons.NoteAdd,
+                small = true,
+                tone = BtnTone.Ghost,
+                enabled = onNew != null,
+                onClick = { onNew?.invoke() },
+            )
+        }
+    }
+}
+
+/**
+ * v22 修订版：S11 骨架屏加载态。
+ *
+ * 设计稿把它画成一个"示例卡"（标题「骨架屏加载态」+ 三行 pulse 占位）。
+ * 实现为真实的 loading 组件：safOn 已授权但 [SafTree.list] 还在后台跑时显示，
+ * 用 `rememberInfiniteTransition` 做 0.4↔0.8 的透明度呼吸（1.5s，与设计稿
+ * `@keyframes pulse` 一致，第二/三行带 0.2s / 0.1s 延迟错开）。
+ *
+ * ⚠️ 设计稿外层那个「骨架屏加载态」说明文字**不实现** —— 那是给看稿人解释
+ * 这是什么，不是产品内容；真机上出现一行"骨架屏加载态"反而莫名其妙。
+ */
+@Composable
+private fun S11Skeleton() {
+    val c = DshTheme.colors
+    val tr = rememberInfiniteTransition(label = "skeleton")
+    // ⚠️ 不能包成局部 fun —— animateFloat 是 @Composable，非 composable 函数里调不了。
+    // 三个占位行的呼吸相位各自独立（延迟 0 / 100 / 200ms，与设计稿 animation-delay 一致）。
+    val a0 by tr.animateFloat(
+        initialValue = 0.4f, targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(750, delayMillis = 0, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "p0",
+    )
+    val a1 by tr.animateFloat(
+        initialValue = 0.4f, targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(750, delayMillis = 100, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "p1",
+    )
+    val a2 by tr.animateFloat(
+        initialValue = 0.4f, targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(750, delayMillis = 200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "p2",
+    )
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(c.card)
+            .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        listOf(a0 to 60, a1 to 50, a2 to 55).forEach { (a, wPct) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(c.line2.copy(alpha = a)),
+                )
+                Column(
+                    Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(wPct / 100f)
+                            .height(11.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(c.line2.copy(alpha = a)),
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxWidth((wPct - 20) / 100f)
+                            .height(9.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(c.line2.copy(alpha = a)),
+                    )
+                }
+            }
         }
     }
 }

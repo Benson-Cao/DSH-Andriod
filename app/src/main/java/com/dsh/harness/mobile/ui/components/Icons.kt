@@ -29,12 +29,18 @@ object DshIcons {
     val AlternateEmail = Icons.Filled.AlternateEmail
     val FilterList = Icons.Filled.FilterList
     val FileDownload = Icons.Filled.FileDownload
+    /** v22 修订版：侧栏「左滑会话可删除 / 归档」提示用 */
+    val SwipeLeft = Icons.Filled.SwipeLeft
     val Settings = Icons.Filled.Settings
     val Lock = Icons.Filled.Lock
     val Info = Icons.Filled.Info
     val Warning = Icons.Filled.Warning
+    val Error = Icons.Filled.Error
     val ErrorOutline = Icons.Outlined.ErrorOutline
     val Refresh = Icons.Filled.Refresh
+    /** v22 修订版：S11 空工作区「上传文件」/「新建」用 */
+    val Upload = Icons.Filled.Upload
+    val NoteAdd = Icons.Filled.NoteAdd
     val CallSplit = Icons.Filled.CallSplit
     val Visibility = Icons.Filled.Visibility
     val VisibilityOff = Icons.Filled.VisibilityOff
