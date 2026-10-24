@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.dsh.harness.mobile.ui.theme.*
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
@@ -205,10 +206,14 @@ fun BoxScope.DshSheet(
     }
 
     if (visible) {
+        // v22 修订版 · 横屏/平板：Sheet 最大 480dp 居中（设计稿"Sheet max 480px centered"）。
+        // 手机（Compact）不受限，仍满宽；用 widthIn(max) 在宽屏上把列宽钉在 480。
+        val maxSheetW = if (LocalDshWidth.current == DshWidth.Compact) Dp.Infinity else 480.dp
         Column(
             modifier = modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .widthIn(max = maxSheetW)
                 .fillMaxHeight(maxHeightRatio)
                 .clip(shape)
                 .background(c.sheet)

@@ -121,6 +121,8 @@ private enum class SheetKind {
     Service,
     /** v20：S38 退出登录二次确认 */
     Logout,
+    /** v22 修订版：S3 工具行三个 Sheet */
+    Add, Perm, Attach,
 }
 
 /**
@@ -487,8 +489,10 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onOpenDrawer = { drawerOpen = true },
                         onPickWorkspace = { sheet = SheetKind.Workspace },
                         onPickMode = { sheet = SheetKind.NewSession },
-                        // v24：「+」= 添加附件/引用 → 与 @ 同一个「提及」选择器
-                        onAddAttachment = { mentionOpen = true },
+                        // v22 修订版：工具行三个按钮 → 三个独立 Sheet
+                        onOpenAdd = { sheet = SheetKind.Add },
+                        onOpenPerm = { sheet = SheetKind.Perm },
+                        onOpenAttach = { sheet = SheetKind.Attach },
                         onPickModel = { sheet = SheetKind.Model },
                         onSend = { text ->
                             vm.send(text)
@@ -1102,6 +1106,24 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         vm.removeApiKey()
                         toast = "已清除本机 API Key"
                     },
+                )
+
+                // —— v22 修订版：S3 工具行三个 Sheet ——
+                SheetKind.Add -> S3AddSheet(
+                    visible = true,
+                    onDismiss = { sheet = SheetKind.None },
+                    onToast = { toast = it },
+                )
+                SheetKind.Perm -> S3PermSheet(
+                    visible = true,
+                    onDismiss = { sheet = SheetKind.None },
+                    onToast = { toast = it },
+                )
+                SheetKind.Attach -> S3AttachSheet(
+                    visible = true,
+                    onDismiss = { sheet = SheetKind.None },
+                    onToast = { toast = it },
+                    onPicked = { homeInput += if (homeInput.isBlank()) it else " $it" },
                 )
 
                 SheetKind.None -> Unit

@@ -118,6 +118,11 @@ object DshIcons {
     val ArrowUpward = Icons.Filled.ArrowUpward
     val PlayArrow = Icons.Filled.PlayArrow
     val Rocket = Icons.Filled.Rocket
+    // —— v22 修订版：S3 工具行「权限档位」按钮 + 权限 Sheet 行图标 ——
+    val Edit = Icons.Filled.Edit
+    val Security = Icons.Filled.Security
+    /** 附件（attach_file 图标，配合 S3 工具行与「附件」Sheet） */
+    val AttachFile = Icons.Filled.AttachFile
     // —— v13 轨迹工具栏 / S26 检查器 ——
     val UnfoldMore = Icons.Filled.UnfoldMore
     val Compress = Icons.Filled.Compress
@@ -178,7 +183,8 @@ object DshIcons {
         "close" -> Close; "menu" -> Menu; "arrow_back" -> ArrowBack
         "arrow_forward" -> ArrowForward; "expand_more" -> ExpandMore
         "chevron_right" -> ChevronRight; "lock" -> Lock; "info" -> Info
-        "error_outline" -> ErrorOutline; "warning" -> Warning; "shield" -> Icons.Outlined.Shield
+        "error_outline" -> ErrorOutline; "warning" -> Warning;         "shield" -> Icons.Outlined.Shield
+        "edit" -> Edit; "security" -> Security; "attach_file" -> AttachFile
         "create_new_folder" -> CreateNewFolder; "add_circle_outline" -> AddCircleOutline
         "settings" -> Settings; "search" -> Search; "filter_list" -> FilterList
         "filter_none" -> FilterNone; "subject" -> Subject; "file_download" -> FileDownload

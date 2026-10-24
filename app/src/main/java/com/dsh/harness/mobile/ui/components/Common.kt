@@ -270,12 +270,15 @@ fun DshMRow(
     iconTone: ChipTone? = null,
     trailing: (@Composable () -> Unit)? = null,
     chevron: Boolean = false,
+    /** v22 修订版：权限档位 Sheet 的当前档位需要软底高亮（设计稿 `.mrow{background:var(--soft)}`）。 */
+    selected: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val c = DshTheme.colors
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (selected) Modifier.background(c.soft, RoundedCornerShape(Radius.md)) else Modifier)
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,

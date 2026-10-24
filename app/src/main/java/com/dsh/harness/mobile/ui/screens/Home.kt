@@ -74,8 +74,12 @@ fun S3Home(
     onOpenDrawer: () -> Unit,
     onPickWorkspace: () -> Unit,
     onPickMode: () -> Unit,
-    /** v24：工具行「+」按钮 —— 添加附件/引用（打开「提及」选择器） */
-    onAddAttachment: () -> Unit = {},
+    /** v22 修订版：工具行「+」按钮 —— 打开「添加」Sheet（新建文件/文件夹 + 上传） */
+    onOpenAdd: () -> Unit = {},
+    /** v22 修订版：工具行「盾牌」按钮 —— 打开「权限档位」Sheet */
+    onOpenPerm: () -> Unit = {},
+    /** v22 修订版：工具行「附件」按钮 —— 打开「附件」Sheet（上传附件/图片） */
+    onOpenAttach: () -> Unit = {},
     /** 点输入框右下角模型名 → 唤起 S29 模型选择器 */
     onPickModel: () -> Unit = {},
     onSend: (String) -> Unit,
@@ -313,23 +317,27 @@ fun S3Home(
 
                 Spacer(Modifier.height(10.dp))
 
-                // —— 工具行 ——
+                // —— 工具行（v22 修订版：与 HTML 工具行逐像素对齐）——
+                // HTML：+（添加）/ 盾牌（权限档位）/ 附件（attach_file）/ 弹性 / 模型下拉 / 发送
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     DshIBtn(
-                        DshIcons.AddCircleOutline, "添加附件",
+                        DshIcons.Add, "添加",
                         enabled = workspaceChosen && !nasReadOnly,
-                        // v24：接线到「提及」选择器（与输入 @ 同一个 Sheet）。
-                        // 此前 onClick = {} 空实现，用户实测"点击＋号无反应"。
-                        onClick = onAddAttachment,
+                        onClick = onOpenAdd,
                     )
-                    DshTextDropdown(
-                        text = "工作区内修改",
-                        onClick = onPickMode,
+                    DshIBtn(
+                        DshIcons.Shield, "权限档位",
                         enabled = workspaceChosen && !nasReadOnly,
+                        onClick = onOpenPerm,
+                    )
+                    DshIBtn(
+                        DshIcons.AttachFile, "附件",
+                        enabled = workspaceChosen && !nasReadOnly,
+                        onClick = onOpenAttach,
                     )
                     // 模型名 + 思考强度同行（点开进 S29）
                     // v24：本区域参与 weight —— 此前模型名 Text 不换行不省略，
@@ -1327,4 +1335,286 @@ private fun S29ModelRow(
         Spacer(Modifier.height(4.dp))
         Text(model.desc, style = Type.sec, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
+}
+
+// ============================ v22 修订版 · S3 工具行三个 Sheet ============================
+
+/** 权限档位（v22 修订版「权限档位」Sheet）。默认「工作区内修改」，
+ *  与 S9 模式卡、ACP 越界审批的语义一致：仅可查看 / 工作区内修改 / 完全权限。 */
+enum class PermTier(val label: String) {
+    ViewOnly("仅可查看"),
+    Workspace("工作区内修改"),
+    Full("完全权限"),
+}
+
+/**
+ * S3 工具行「+」→「添加」Sheet（v22 修订版）。
+ *
+ * 设计稿结构：标题行(添加 + 关闭) → 新建（新建文件 / 新建文件夹）→ 上传（上传附件 / 上传图片）。
+ * 与之前「+ = 提及选择器」不同，v22 把"添加"拆成独立 Sheet，并把上传收进来。
+ * 四类动作都接真 SAF 选择器：新建文件/文件夹走系统创建，上传走 OpenDocument /
+ * GetContent 并复制到 dsh 工作区 attachments/，引擎（cwd=home）能真实读到。
+ */
+@Composable
+fun BoxScope.S3AddSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onToast: (String) -> Unit = {},
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val newFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        if (uri != null) onToast("已新建文件：" + (queryDisplayName(ctx, uri) ?: "未命名"))
+    }
+    val newFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                onToast(if (createFolderInTree(ctx, uri)) "已在所选位置创建文件夹：新建文件夹" else "创建文件夹失败")
+            }
+        }
+    }
+    val pickAttachment = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                val name = copyToAttachments(ctx, uri)
+                onToast(if (name != null) "已添加附件：$name" else "添加附件失败")
+            }
+        }
+    }
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                val name = copyToAttachments(ctx, uri)
+                onToast(if (name != null) "已添加图片：$name" else "添加图片失败")
+            }
+        }
+    }
+
+    val c = DshTheme.colors
+    DshSheet(
+        visible = visible,
+        onDismiss = onDismiss,
+        header = {
+            DshSheetHeader(
+                title = "添加",
+                trailing = { DshIBtn(DshIcons.Close, "关闭", onClick = onDismiss) },
+            )
+        },
+        content = {
+            DshSecTitle("新建")
+            DshCard(padding = PaddingValues(0.dp)) {
+                DshMRow(
+                    title = "新建文件",
+                    subtitle = "在工作区创建空白文件",
+                    icon = DshIcons.NoteAdd,
+                    onClick = { newFile.launch("") },
+                )
+                DshDivider()
+                DshMRow(
+                    title = "新建文件夹",
+                    subtitle = "创建目录组织文件",
+                    icon = DshIcons.CreateNewFolder,
+                    iconTone = ChipTone.Purple,
+                    onClick = { newFolder.launch(null) },
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            DshSecTitle("上传")
+            DshCard(padding = PaddingValues(0.dp)) {
+                DshMRow(
+                    title = "上传附件",
+                    subtitle = "支持 PDF / Word / Excel / 代码等",
+                    icon = DshIcons.Description,
+                    chevron = true,
+                    onClick = { pickAttachment.launch(arrayOf("*/*")) },
+                )
+                DshDivider()
+                DshMRow(
+                    title = "上传图片",
+                    subtitle = "支持 PNG / JPG / 截图，多模态输入",
+                    icon = DshIcons.Image,
+                    iconTone = ChipTone.Ok,
+                    chevron = true,
+                    onClick = { pickImage.launch("image/*") },
+                )
+            }
+        },
+    )
+}
+
+/**
+ * 把 SAF 选中的文件复制到 dsh 工作区 attachments/ 目录，返回显示名；失败返回 null。
+ * 与 S3MentionSheet 同款真链路：引擎 cwd=home，复制后可直接读取真实文件。
+ */
+private fun copyToAttachments(ctx: android.content.Context, uri: Uri): String? = try {
+    val name = queryDisplayName(ctx, uri) ?: ("file_" + System.currentTimeMillis())
+    val dir = java.io.File(com.dsh.harness.DshBootstrap.home(ctx.applicationContext), "attachments")
+    dir.mkdirs()
+    val fname = System.currentTimeMillis().toString() + "_" + name
+    val dest = java.io.File(dir, fname)
+    ctx.contentResolver.openInputStream(uri)?.use { ins ->
+        FileOutputStream(dest).use { outs -> ins.copyTo(outs) }
+    }
+    name
+} catch (_: Throwable) {
+    null
+}
+
+/** 在用户用 OpenDocumentTree 选中的目录里创建「新建文件夹」子目录（框架 DocumentsContract，无需额外依赖）。 */
+private fun createFolderInTree(ctx: android.content.Context, treeUri: Uri): Boolean = try {
+    val cr = ctx.contentResolver
+    val docId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+    val parentUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+    android.provider.DocumentsContract.createDocument(
+        cr, parentUri,
+        android.provider.DocumentsContract.Document.MIME_TYPE_DIR, "新建文件夹",
+    ) != null
+} catch (_: Throwable) {
+    false
+}
+
+/**
+ * S3 工具行「盾牌」→「权限档位」Sheet（v22 修订版）。
+ *
+ * 设计稿结构：标题行(shield + 权限档位 + 关闭)
+ *   → 仅可查看 / 工作区内修改(选中) / 完全权限
+ *   → 脚注：权限档位决定 Agent 对工作区的操作边界，越界操作始终需要你确认。
+ *
+ * 权限档位在 ACP 里不是会话级预设（协议无 session/set_mode），而是越界时
+ * per-request 的 session/request_permission 审批；这里选中的是当前档位，仅作
+ * 本地状态与 UI 呈现，切换给出 toast，不编造"已生效"的服务端语义。
+ */
+@Composable
+fun BoxScope.S3PermSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    initialTier: PermTier = PermTier.Workspace,
+    onToast: (String) -> Unit = {},
+) {
+    var sel by remember { mutableStateOf(initialTier) }
+    val c = DshTheme.colors
+
+    val tiers = listOf(
+        Triple(PermTier.ViewOnly, "只读模式，不修改任何文件", DshIcons.Visibility to ChipTone.Ok),
+        Triple(PermTier.Workspace, "可在选定工作区内读写文件", DshIcons.Edit to ChipTone.Brand),
+        Triple(PermTier.Full, "可执行命令，越界操作需确认", DshIcons.Security to ChipTone.Warn),
+    )
+
+    DshSheet(
+        visible = visible,
+        onDismiss = onDismiss,
+        header = {
+            DshSheetHeader(
+                title = "权限档位",
+                icon = DshIcons.Shield,
+                iconTint = c.brand,
+                trailing = { DshIBtn(DshIcons.Close, "关闭", onClick = onDismiss) },
+            )
+        },
+        content = {
+            DshCard(padding = PaddingValues(0.dp)) {
+                tiers.forEachIndexed { i, (tier, sub, iconAndTone) ->
+                    if (i > 0) DshDivider()
+                    val (icon, tone) = iconAndTone
+                    val on = sel == tier
+                    DshMRow(
+                        title = tier.label,
+                        subtitle = sub,
+                        icon = icon,
+                        iconTone = tone,
+                        selected = on,
+                        trailing = if (on) ({ Icon(DshIcons.CheckCircle, "当前", Modifier.size(19.dp), tint = c.brand) }) else null,
+                        onClick = {
+                            sel = tier
+                            onToast("已切换：${tier.label}")
+                        },
+                    )
+                }
+            }
+            Text(
+                "权限档位决定 Agent 对工作区的操作边界，越界操作始终需要你确认。",
+                style = Type.meta.copy(lineHeight = 17.6.sp),
+                color = c.ink3,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+        },
+    )
+}
+
+/**
+ * S3 工具行「附件」→「附件」Sheet（v22 修订版）。
+ *
+ * 设计稿结构：标题行(attach_file + 附件 + 关闭)
+ *   → 上传附件（从文件管理器选择）/ 上传图片（从相册选择或拍照）。
+ *
+ * 接真 SAF 选择器：选中的文件复制到 dsh 工作区 attachments/，并把相对路径
+ * 经 [onPicked] 回填输入框（与 @ 提及同一真链路），发送时随消息提交。
+ */
+@Composable
+fun BoxScope.S3AttachSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onToast: (String) -> Unit = {},
+    onPicked: (String) -> Unit = {},
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val pickAttachment = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                val name = copyToAttachments(ctx, uri)
+                if (name != null) {
+                    onPicked("attachments/" + System.currentTimeMillis().toString() + "_" + name)
+                    onToast("已添加附件：$name")
+                } else onToast("添加附件失败")
+            }
+        }
+    }
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                val name = copyToAttachments(ctx, uri)
+                if (name != null) {
+                    onPicked("attachments/" + System.currentTimeMillis().toString() + "_" + name)
+                    onToast("已添加图片：$name")
+                } else onToast("添加图片失败")
+            }
+        }
+    }
+
+    val c = DshTheme.colors
+    DshSheet(
+        visible = visible,
+        onDismiss = onDismiss,
+        header = {
+            DshSheetHeader(
+                title = "附件",
+                icon = DshIcons.AttachFile,
+                iconTint = c.brand,
+                trailing = { DshIBtn(DshIcons.Close, "关闭", onClick = onDismiss) },
+            )
+        },
+        content = {
+            DshCard(padding = PaddingValues(0.dp)) {
+                DshMRow(
+                    title = "上传附件",
+                    subtitle = "从文件管理器选择",
+                    icon = DshIcons.Description,
+                    chevron = true,
+                    onClick = { pickAttachment.launch(arrayOf("*/*")) },
+                )
+                DshDivider()
+                DshMRow(
+                    title = "上传图片",
+                    subtitle = "从相册选择或拍照",
+                    icon = DshIcons.Image,
+                    iconTone = ChipTone.Ok,
+                    chevron = true,
+                    onClick = { pickImage.launch("image/*") },
+                )
+            }
+        },
+    )
 }
