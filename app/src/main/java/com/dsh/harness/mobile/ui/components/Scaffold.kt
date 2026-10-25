@@ -234,17 +234,20 @@ fun BoxScope.DshSheet(
 
             header()
 
-            // 内容区：设计稿"内容超出时 sh-b 内滚，按钮区固定"
+            // 内容区：设计稿"内容超出时 sh-b 内滚，按钮区固定"。
+            // ⚠️ 这里绝不能挂 windowInsetsBottomHeight：v30.10 给内容列加了
+            //    `.windowInsetsBottomHeight(navigationBars)`，真机上它挂在
+            //    `weight(1f)+verticalScroll` 的内容列上会让**整块内容渲染不出来**
+            //    （所有 Sheet 只剩 header/footer；footer 不滚动所以幸免）。
+            //    git 实证：v26(a4a5a06) 内容列无它 → 正常；v30.10(2ad89dc) 加上 → 空。
+            //    恢复 v26 结构；底部避导航栏由 footer（有 windowInsetsBottomHeight，正常）
+            //    或短内容天然不触底来保证，无 footer 的 Sheet 内容都在顶部，不会压导航栏。
             Column(
                 Modifier
                     .weight(1f, fill = true)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = Space.sheet)
-                    // v22 修订版：`.sh-b` 底部加 `env(safe-area-inset-bottom)`。
-                    // 真机上等价于 navigationBarsPadding —— 没有虚拟导航栏的设备
-                    // 这个 inset 是 0，不会平白多出一块空白。
-                    .windowInsetsBottomHeight(WindowInsets.navigationBars),
+                    .padding(horizontal = Space.sheet),
             ) {
                 content()
                 Spacer(Modifier.height(14.dp))

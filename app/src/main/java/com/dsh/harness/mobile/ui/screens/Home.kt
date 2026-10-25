@@ -222,11 +222,11 @@ fun S3Home(
                         onClick = onPickWorkspace,
                     )
                 } else {
-                    // S28：未选时品牌色「选择工作区 ▾」
+                    // v22 删除 S28：未选工作区不再是独立页/高亮态。这里只把下拉文案
+                    // 换成"选择工作区"作为入口提示，样式与已选时一致（ink2，不搞品牌色强调）。
                     DshTextDropdown(
                         text = "选择工作区",
                         icon = DshIcons.FolderOpen,
-                        brand = true,
                         onClick = onPickWorkspace,
                     )
                 }

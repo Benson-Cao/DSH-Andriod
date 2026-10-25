@@ -64,7 +64,7 @@ android {
         applicationId "com.dsh.harness"
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
-        versionCode 1025
+        versionCode 1026
         versionName "1.0.0"
 
         if (appVersionName) versionName = appVersionName
