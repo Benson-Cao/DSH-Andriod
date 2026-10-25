@@ -274,7 +274,9 @@ fun S3Home(
                             modifier = Modifier.weight(1f),
                         )
                     }
-                } else if (workspaceChosen) {
+                } else {
+                    // v22 删除 S28：未选工作区不再是独立页。首页保持统一极简布局，
+                    // 输入框常驻可编辑（与设计稿一致），"未选工作区"只在发送时给出原因。
                     BasicTextInputCompat(
                         value = input,
                         onValueChange = { v ->
@@ -288,31 +290,6 @@ fun S3Home(
                         },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
                     )
-                } else {
-                    // S28：未选工作区 → 置灰提示 + 约束条
-                    Text(
-                        "选择一个工作区开始",
-                        style = Type.input,
-                        color = c.ink3,
-                        modifier = Modifier.heightIn(min = 60.dp),
-                    )
-                    Row(
-                        Modifier.fillMaxWidth().padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        Icon(
-                            DshIcons.ErrorOutline, null,
-                            Modifier.size(15.dp).padding(top = 2.dp),
-                            tint = c.warn,
-                        )
-                        Text(
-                            "Harness 必须以本地文件夹作为工作区才能读写文件与执行命令",
-                            style = Type.sec.copy(fontWeight = FontWeight.Medium, lineHeight = 18.sp),
-                            color = c.ink3,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
                 }
 
                 Spacer(Modifier.height(10.dp))
@@ -454,34 +431,20 @@ fun S3Home(
                 )
             }
 
-            // S28：未选时输入框下方补一个主按钮，直达选择工作区 Sheet
-            if (!workspaceChosen) {
-                Spacer(Modifier.height(14.dp))
-                DshBtn(
-                    text = "选择一个工作区",
-                    icon = DshIcons.FolderOpen,
-                    onClick = onPickWorkspace,
-                )
-            }
-
+            // v22 删除 S28：输入框下方不再补「选择一个工作区」大按钮
+            // （选定工作区走输入框上方的「选择工作区 ▾」下拉，与设计稿一致）。
             Spacer(Modifier.weight(1.6f))
 
-            // —— 边界脚注 ——
+            // v22：底部脚注统一为设计稿的锁形文案（S28 的"选定后…"变体一并去掉）
             Row(
                 Modifier.fillMaxWidth().padding(bottom = 2.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    if (workspaceChosen) DshIcons.Lock else DshIcons.Info,
-                    null, Modifier.size(13.dp), tint = c.ink3,
-                )
+                Icon(DshIcons.Lock, null, Modifier.size(13.dp), tint = c.ink3)
                 Spacer(Modifier.width(5.dp))
                 Text(
-                    if (workspaceChosen)
-                        "所选工作区内的读写与命令 · 越界需经你确认"
-                    else
-                        "选定后，会话、读写与命令都限定在该目录内",
+                    "所选工作区内的读写与命令 · 越界需经你确认",
                     style = Type.meta,
                     color = c.ink3,
                     textAlign = TextAlign.Center,

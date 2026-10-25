@@ -1198,6 +1198,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 // v22 修订版：侧栏 Termux 行移除 → 改传 onExport（S46）；onTermux 不再由侧栏传
                 onExport = { drawerOpen = false; nav.go(Route.S46Export) },
                 onStorage = { drawerOpen = false; nav.go(Route.S50StorageDir) },
+                onNas = { drawerOpen = false; nav.go(Route.S51NasSync) },
                 onArchived = { drawerOpen = false; nav.go(Route.S48Archived) },
                 liveSessions = sessions,
                 keyConfigured = apiKey.configured,

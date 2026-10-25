@@ -2,11 +2,13 @@ package com.dsh.harness.mobile.ui.screens
 
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -18,6 +20,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,6 +57,8 @@ fun BoxScope.S4Drawer(
      */
     /** v30：SAF 存储目录桥入口 */
     onStorage: () -> Unit = {},
+    /** v22 修订版：「工作区」分组头添加面板的「从 NAS 挂载」→ S51 */
+    onNas: () -> Unit = {},
     /** v22 修订版：新增「导出数据」→ S46 导出页 */
     onExport: () -> Unit = {},
     /** v20：会话分组「已归档 · 全部」→ S48 归档管理 */
@@ -98,13 +103,19 @@ fun BoxScope.S4Drawer(
             DshIBtn(DshIcons.Close, "关闭侧边栏", onClick = onClose)
         }
 
-        // —— 一级入口 4 行：行式（不是按钮），行高约 34 ——
+        // —— 一级入口（设计稿 S4 顺序）：新会话 / 插件 / 自动化任务 / 导出数据 / 存储目录 ——
         Column(Modifier.padding(vertical = 2.dp)) {
             NavRow("新会话", DshIcons.Add, selected = selectedNav == 0, onClick = onNewChat)
             NavRow("插件", DshIcons.Extension, selected = selectedNav == 1, badge = "12", onClick = onPlugins)
             NavRow("自动化任务", DshIcons.Schedule, selected = selectedNav == 2, badge = "3", onClick = onAutomation)
-            NavRow("工作区", DshIcons.Folder, selected = selectedNav == 3, badge = "3", onClick = onWorkspace)
+            NavRow("导出数据", DshIcons.FileDownload, selected = false, onClick = onExport)
+            NavRow("存储目录", DshIcons.FolderShared, selected = false, onClick = onStorage)
         }
+
+        // 会话分组区工具状态（设计稿 S4「工作区」分组头的 搜索/排序/添加）
+        var wsPanel by remember { mutableStateOf<String?>(null) }   // null/q(搜索)/s(排序)/a(添加)
+        var wsQuery by remember { mutableStateOf("") }
+        var wsSort by remember { mutableStateOf(0) }                 // 0 最近活动 / 1 创建时间 / 2 名称
 
         // —— 会话分组区：只有这里滚动（设计稿明确）——
         Column(
@@ -113,31 +124,122 @@ fun BoxScope.S4Drawer(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 6.dp),
         ) {
-            // v22 修订版：侧栏新增手势提示（设计稿 9.5px ink3 + swipe_left 图标）
+            // 工作区分组头 + 搜索/排序/添加 工具（设计稿 .grp 工作区）
+            WorkspaceGroupHeader(
+                activeTool = wsPanel,
+                onTool = { t -> wsPanel = if (wsPanel == t) null else t },
+            )
+            when (wsPanel) {
+                "q" -> {
+                    // 搜索面板：实时过滤会话标题
+                    Row(
+                        Modifier
+                            .padding(horizontal = 10.dp, vertical = 2.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.card2)
+                            .border(1.dp, c.line, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        Icon(DshIcons.Search, null, Modifier.size(14.dp), tint = c.ink2)
+                        Box(Modifier.weight(1f)) {
+                            if (wsQuery.isEmpty()) {
+                                Text("搜索当前工作区会话…", style = Type.sec, color = c.ink2)
+                            }
+                            BasicTextField(
+                                value = wsQuery,
+                                onValueChange = { wsQuery = it },
+                                singleLine = true,
+                                textStyle = Type.sec.copy(color = c.ink),
+                                cursorBrush = SolidColor(c.brand),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                    Text(
+                        "输入关键词实时过滤当前工作区的会话标题",
+                        style = Type.meta.copy(fontSize = 10.sp),
+                        color = c.ink3,
+                        modifier = Modifier.padding(start = 14.dp, top = 6.dp),
+                    )
+                }
+                "s" -> {
+                    val sorts = listOf("最近活动", "创建时间", "名称 A-Z")
+                    Row(
+                        Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        sorts.forEachIndexed { i, label ->
+                            DshChip(
+                                label,
+                                tone = if (wsSort == i) ChipTone.Brand else ChipTone.Neutral,
+                                onClick = { wsSort = i },
+                            )
+                        }
+                    }
+                    Text(
+                        "当前：${sorts[wsSort]}",
+                        style = Type.meta.copy(fontSize = 10.sp),
+                        color = c.ink3,
+                        modifier = Modifier.padding(start = 14.dp, top = 4.dp),
+                    )
+                }
+                "a" -> {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 2.dp)) {
+                        WsAddRow(DshIcons.CreateNewFolder, "新建工作区", onClick = onWorkspace)
+                        WsAddRow(DshIcons.FolderOpen, "添加本地文件夹", onClick = onStorage)
+                        WsAddRow(DshIcons.Cloud, "从 NAS 挂载", onClick = onNas)
+                    }
+                }
+            }
+
+            // v22 修订版：手势提示（设计稿 9.5px ink3 + swipe_left 图标）
             Row(
-                Modifier.padding(start = 10.dp, top = 2.dp, bottom = 6.dp),
+                Modifier.padding(start = 10.dp, top = 4.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Icon(DshIcons.SwipeLeft, null, Modifier.size(11.dp), tint = c.ink3)
-                Text(
-                    "左滑会话可删除 / 归档",
-                    style = Type.meta.copy(fontSize = 9.5.sp),
-                    color = c.ink3,
-                )
+                Text("左滑会话可删除 / 归档", style = Type.meta.copy(fontSize = 9.5.sp), color = c.ink3)
             }
+
             if (liveSessions.isNotEmpty()) {
-                // 真实数据：按 cwd 分组，与设计稿「按工作区分组」一致
-                GroupHeader("会话", more = liveSessions.size.toString())
-                liveSessions.forEach { s ->
-                    SessionRow(
-                        title = s.title,
-                        time = s.updatedAt.takeLast(5),
-                        selected = false,
+                // 真实数据：按 cwd（工作区）分组 + 搜索过滤 + 排序，与设计稿「按工作区分组」一致
+                val q = wsQuery.trim()
+                val grouped = liveSessions
+                    .filter { q.isEmpty() || it.title.contains(q, ignoreCase = true) }
+                    .groupBy { it.cwd }
+                    .toList()
+                    .sortedBy { it.first }
+                grouped.forEachIndexed { idx, (cwd, list) ->
+                    val sorted = when (wsSort) {
+                        1 -> list.sortedBy { it.updatedAt }
+                        2 -> list.sortedBy { it.title }
+                        else -> list.sortedByDescending { it.updatedAt }
+                    }
+                    // 第一个工作区的会话直接跟在「工作区」头下（同设计稿）；其余工作区各自加分组头
+                    if (idx > 0) {
+                        GroupHeader(
+                            cwd.substringAfterLast('/').ifEmpty { "工作区" },
+                            more = list.size.toString(),
+                        )
+                    }
+                    sorted.forEach { s ->
+                        SessionRow(title = s.title, time = s.updatedAt.takeLast(5))
+                    }
+                }
+                if (grouped.isEmpty()) {
+                    Text(
+                        "没有匹配的会话",
+                        style = Type.meta.copy(fontSize = 11.5.sp),
+                        color = c.ink3,
+                        modifier = Modifier.padding(start = 24.dp, top = 7.dp, bottom = 7.dp),
                     )
                 }
             } else {
-                GroupHeader("工作区会话", more = "搜索")
+                // 空态回落：沿用设计稿演示分组结构（会话直接挂在「工作区」头下）
                 SessionRow("生成 Q3 数据汇总 PPT", "19:32", selected = true)
                 SessionRow("准备明天评审会的议题清单", "昨天")
 
@@ -191,7 +293,7 @@ fun BoxScope.S4Drawer(
                     )
                 }
                 Text(
-                    "DeepSeek 凭据",
+                    "DeepSeek 账号",
                     style = Type.rowTitle,
                     color = c.ink,
                     maxLines = 1,
@@ -204,21 +306,8 @@ fun BoxScope.S4Drawer(
                 )
             }
 
-            // v22 修订版：Termux 行已从侧栏移除（见 onTermux 注释）
-            NavRow(
-                title = "导出数据",
-                icon = DshIcons.FileDownload,
-                selected = false,
-                onClick = onExport,
-            )
-
-            NavRow(
-                title = "存储目录",
-                icon = DshIcons.FolderOpen,
-                selected = false,
-                onClick = onStorage,
-            )
-
+            // v22 修订版：栏底只剩「设置」（导出数据/存储目录已移到顶部一级入口，
+            // 与设计稿 S4 栏底「账号 + 设置」两行一致；Termux 行早已移除）
             NavRow(
                 title = "设置",
                 icon = DshIcons.Settings,
@@ -346,6 +435,67 @@ private fun SessionRow(
             modifier = Modifier.weight(1f),
         )
         Text(time, style = Type.meta.copy(fontSize = 10.sp), color = c.ink3)
+    }
+}
+
+/** 工作区分组头 + 搜索/排序/添加 工具（设计稿 S4「.grp 工作区」带 ws-tool 三图标）。
+ *  点工具切换对应面板（同设计稿 toggle-panel），activeTool 为当前展开的面板 id。 */
+@Composable
+private fun WorkspaceGroupHeader(activeTool: String?, onTool: (String) -> Unit) {
+    val c = DshTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 18.dp, end = 10.dp, top = 14.dp, bottom = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "工作区",
+            style = Type.meta.copy(
+                letterSpacing = 0.5.sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            ),
+            color = c.ink3,
+            maxLines = 1,
+        )
+        Spacer(Modifier.weight(1f))
+        WsToolIcon(DshIcons.Search, active = activeTool == "q") { onTool("q") }
+        WsToolIcon(DshIcons.FilterList, active = activeTool == "s") { onTool("s") }
+        WsToolIcon(DshIcons.Add, active = activeTool == "a") { onTool("a") }
+    }
+}
+
+/** 工作区分组头右侧小工具图标（设计稿 .ws-tool：26dp 触区，active 时 soft 底 + brand 字） */
+@Composable
+private fun WsToolIcon(icon: ImageVector, active: Boolean, onClick: () -> Unit) {
+    val c = DshTheme.colors
+    Box(
+        Modifier
+            .size(26.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (active) c.soft else Color.Transparent)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, null, Modifier.size(15.dp), tint = if (active) c.brand else c.ink3)
+    }
+}
+
+/** 「添加」面板的行（设计稿 .ws-addrow：图标 + 文字，点击执行动作） */
+@Composable
+private fun WsAddRow(icon: ImageVector, title: String, onClick: () -> Unit) {
+    val c = DshTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Icon(icon, null, Modifier.size(16.dp), tint = c.ink2)
+        Text(title, style = Type.chip.copy(fontSize = 12.5.sp), color = c.ink)
     }
 }
 
