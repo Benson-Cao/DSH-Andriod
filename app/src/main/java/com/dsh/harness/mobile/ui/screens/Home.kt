@@ -815,22 +815,21 @@ fun BoxScope.S3ServiceSheet(
                 modifier = Modifier.padding(top = 11.dp),
             )
         },
-        // footer 按钮高度 = 66.dp（v30.20 用户显式指定，高于 App 默认 46dp；这是有意的
-        // 视觉强调，不照搬设计稿 46px，也不做整画布缩放）。四个 Sheet footer 统一此值。
+        // footer 按钮高度 = App 默认 46dp（v30.21 用户拍板回到 46；此前 v30.20 的 66dp 废弃）。
+        // 注意：高度生效的前提是 DshSheet footer 已改用 navigationBarsPadding
+        //（旧 windowInsetsBottomHeight 会把 footer 列高钉死为导航栏 inset，按钮被钳到 ~18dp）。
         footer = {
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 DshBtn(
                     "关闭",
                     tone = BtnTone.Ghost,
                     modifier = Modifier.weight(1f),
-                    height = 66.dp,
                     onClick = onDismiss,
                 )
                 DshBtn(
                     "全部设置",
                     icon = DshIcons.Settings,
                     modifier = Modifier.weight(1.2f),
-                    height = 66.dp,
                     onClick = onAllSettings,
                 )
             }
@@ -982,7 +981,7 @@ fun BoxScope.S3MentionSheet(
             )
         },
         footer = {
-            DshBtn("关闭", tone = BtnTone.Ghost, height = 66.dp, onClick = onDismiss)
+            DshBtn("关闭", tone = BtnTone.Ghost, onClick = onDismiss)
         },
     )
 }
@@ -1109,8 +1108,8 @@ fun BoxScope.S3EngineDiagnostics(
         },
         footer = {
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                DshBtn("关闭", tone = BtnTone.Ghost, modifier = Modifier.weight(1f), height = 66.dp, onClick = onDismiss)
-                DshBtn("重试连接", icon = DshIcons.Sync, modifier = Modifier.weight(1.3f), height = 66.dp, onClick = onRetry)
+                DshBtn("关闭", tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onDismiss)
+                DshBtn("重试连接", icon = DshIcons.Sync, modifier = Modifier.weight(1.3f), onClick = onRetry)
             }
         },
     )
@@ -1242,7 +1241,7 @@ fun BoxScope.S29ModelSheet(
             )
         },
         footer = {
-            DshBtn("完成", tone = BtnTone.Ghost, height = 66.dp, onClick = onDone)
+            DshBtn("完成", tone = BtnTone.Ghost, onClick = onDone)
         },
     )
 }

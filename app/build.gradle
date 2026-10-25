@@ -14,6 +14,32 @@ ext {
     packageVariant = System.getenv("TERMUX_PACKAGE_VARIANT") ?: "apt-android-7" // Default: "apt-android-7"
 }
 
+// ---- v30.21：版本号单一真值 = dsh-harness-android/version.ini ----
+// 此前 versionName 恒硬编码 "1.0.0"，安装信息里永远显示 1.0.0；versionCode 也要每次手改两处。
+// 现在从 version.ini 读 version_code / version_name / build_rev，读不到文件时用下面兜底字面量。
+// semver 校验要求三段式，"30.21" 这类两段值自动补 ".0"。
+def loadDshVersion() {
+    def candidates = [
+        rootProject.file("../dsh-harness-android/version.ini"),   // 开发布局：termux-app 与 dsh-harness-android 同级
+        rootProject.file("harness-src/version.ini"),              // release 副本布局：DSH-Andriod/harness-src/version.ini
+    ]
+    def iniFile = candidates.find { it.exists() }
+    def code = "1034"
+    def name = "30.21"
+    def rev = "141"
+    if (iniFile != null) {
+        def props = new Properties()
+        iniFile.withInputStream { props.load(it) }
+        if (props.getProperty("version_code")) code = props.getProperty("version_code").trim()
+        if (props.getProperty("version_name")) name = props.getProperty("version_name").trim()
+        if (props.getProperty("build_rev"))    rev  = props.getProperty("build_rev").trim()
+    }
+    def segs = name.tokenize('.')
+    while (segs.size() < 3) segs << '0'
+    return [code: code.toInteger(), nameSemver: segs.take(3).join('.'), rev: rev]
+}
+ext.DshVer = loadDshVersion()
+
 android {
     namespace "com.termux"
 
@@ -64,8 +90,8 @@ android {
         applicationId "com.dsh.harness"
         minSdkVersion project.properties.minSdkVersion.toInteger()
         targetSdkVersion project.properties.targetSdkVersion.toInteger()
-        versionCode 1033
-        versionName "1.0.0"
+        versionCode DshVer.code
+        versionName DshVer.nameSemver
 
         if (appVersionName) versionName = appVersionName
         validateVersionName(versionName)

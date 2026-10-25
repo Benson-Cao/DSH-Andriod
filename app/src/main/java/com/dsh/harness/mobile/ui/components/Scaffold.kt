@@ -242,7 +242,8 @@ fun BoxScope.DshSheet(
             //    `weight(1f)+verticalScroll` 的内容列上会让**整块内容渲染不出来**
             //    （所有 Sheet 只剩 header/footer；footer 不滚动所以幸免）。
             //    git 实证：v26(a4a5a06) 内容列无它 → 正常；v30.10(2ad89dc) 加上 → 空。
-            //    恢复 v26 结构；底部避导航栏由 footer（有 windowInsetsBottomHeight，正常）
+            //    恢复 v26 结构；底部避导航栏由 footer（v30.21 起用 navigationBarsPadding，
+            //    原 windowInsetsBottomHeight 会把 footer 列高钉死为 inset、钳制按钮高度）
             //    或短内容天然不触底来保证，无 footer 的 Sheet 内容都在顶部，不会压导航栏。
             // fill=false：内容列只取自身高度（不撑满），配合外层 heightIn 实现"短则包裹"。
             Column(
@@ -257,12 +258,17 @@ fun BoxScope.DshSheet(
             }
 
             if (footer != null) {
+                // v30.21 踩坑修正：这里原来用 `.windowInsetsBottomHeight(navigationBars)`，
+                // 它把 footer 列高**钉死为导航栏 inset 高度**（手势导航机上仅 ~18dp），
+                // footer 里的按钮 `.height(66.dp)` 全被约束钳制成 18dp——
+                // 真机实测 footer 按钮永远只有 63px（v30.19 的 46dp、v30.20 的 66dp 全部无效）。
+                // 正解 = navigationBarsPadding()（inset 作为 padding 追加，列包裹内容）。
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .topLine(c.line)
-                        .padding(horizontal = Space.sheet, vertical = 12.dp)
-                        .windowInsetsBottomHeight(WindowInsets.navigationBars),
+                        .navigationBarsPadding()
+                        .padding(horizontal = Space.sheet, vertical = 12.dp),
                 ) {
                     footer()
                 }
