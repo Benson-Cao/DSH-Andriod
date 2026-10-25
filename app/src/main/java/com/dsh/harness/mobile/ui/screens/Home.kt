@@ -296,26 +296,36 @@ fun S3Home(
 
                 // —— 工具行（v22 修订版：与 HTML 工具行逐像素对齐）——
                 // HTML：+（添加）/ 盾牌（权限档位）/ 附件（attach_file）/ 弹性 / 模型下拉 / 发送
+                // v30.22：三工具独立成组（间距 2dp，视觉更紧凑）+ 每钮加 soft 底色（用户指定）；
+                //         与右侧模型下拉之间仍保持 8dp。
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    DshIBtn(
-                        DshIcons.Add, "添加",
-                        enabled = workspaceChosen && !nasReadOnly,
-                        onClick = onOpenAdd,
-                    )
-                    DshIBtn(
-                        DshIcons.Shield, "权限档位",
-                        enabled = workspaceChosen && !nasReadOnly,
-                        onClick = onOpenPerm,
-                    )
-                    DshIBtn(
-                        DshIcons.AttachFile, "附件",
-                        enabled = workspaceChosen && !nasReadOnly,
-                        onClick = onOpenAttach,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        DshIBtn(
+                            DshIcons.Add, "添加",
+                            enabled = workspaceChosen && !nasReadOnly,
+                            bg = c.soft,
+                            onClick = onOpenAdd,
+                        )
+                        DshIBtn(
+                            DshIcons.Shield, "权限档位",
+                            enabled = workspaceChosen && !nasReadOnly,
+                            bg = c.soft,
+                            onClick = onOpenPerm,
+                        )
+                        DshIBtn(
+                            DshIcons.AttachFile, "附件",
+                            enabled = workspaceChosen && !nasReadOnly,
+                            bg = c.soft,
+                            onClick = onOpenAttach,
+                        )
+                    }
                     // 模型名 + 思考强度同行（点开进 S29）
                     // v24：本区域参与 weight —— 此前模型名 Text 不换行不省略，
                     // 窄屏上把发送键整个挤出容器（用户实测"首页还是没有发送按钮"）。
