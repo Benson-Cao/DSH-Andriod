@@ -393,7 +393,7 @@ fun DshSeg(
                     .clickable { onSelect(i) }
                     .padding(
                         vertical = if (tall) 10.dp else 7.dp,
-                        horizontal = if (tall) 10.dp else 4.dp,
+                        horizontal = if (tall) 6.dp else 4.dp,
                     ),
                 contentAlignment = Alignment.Center,
             ) {
