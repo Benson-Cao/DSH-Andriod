@@ -424,6 +424,8 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         )
         viewModelScope.launch {
             _busy.value = true
+            // v30.24：首条消息给会话起标题（App 侧注册表，引擎不落盘标题）
+            rememberSessionTitle(client.currentSessionId(), clean)
             val stop = client.prompt(clean)
             _busy.value = false
             // 把助手消息的"流式"标记关掉（下一轮 chunk 会另起一条）
@@ -503,6 +505,71 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { client.setConfigOption("reasoning_effort", value) }
     }
 
+    // ==================== v30.24 会话标题（App 侧注册表） ====================
+
+    /**
+     * ACP session/list 的 title 恒为空（dsh 引擎不落盘标题，会话本体是
+     * session.v3.jsonl.zstd，App 侧没有 zstd 解码器读不回历史消息）。
+     * 所以标题由 App 自己记：对本会话发出的**第一条消息**取前 24 字，
+     * 存 `<home>/.dsh/session-titles.json`（原子写：tmp+rename）。
+     * 展示优先级：引擎 title > 本地注册表 > 「未命名会话」。
+     */
+    private val sessionTitles = HashMap<String, String>()
+    private var sessionTitlesLoaded = false
+
+    private fun titlesFile(): File =
+        File(DshBootstrapAccess.homeDir(getApplication()), ".dsh/session-titles.json")
+
+    /** 只在 refreshSessions 前调用一次；读失败静默（等于全部回落"未命名会话"） */
+    private fun loadSessionTitlesLocked() {
+        if (sessionTitlesLoaded) return
+        sessionTitlesLoaded = true
+        try {
+            val f = titlesFile()
+            if (!f.exists()) return
+            val obj = JSONObject(f.readText())
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = obj.optString(k)
+                if (k.isNotEmpty() && v.isNotEmpty()) sessionTitles[k] = v
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "会话标题注册表读取失败", t)
+        }
+    }
+
+    /** 原子写注册表（tmp + rename），只动自己的文件，绝不碰 sessions/ 本体 */
+    private fun saveSessionTitlesLocked() {
+        try {
+            val obj = JSONObject()
+            sessionTitles.forEach { (k, v) -> obj.put(k, v) }
+            val text = obj.toString()
+            val f = titlesFile()
+            f.parentFile?.mkdirs()
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(text)
+            if (!tmp.renameTo(f)) {
+                f.writeText(text)
+                tmp.delete()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "会话标题注册表写入失败", t)
+        }
+    }
+
+    /** 首条消息 → 标题（first-wins：已有标题的会话不覆盖） */
+    private fun rememberSessionTitle(id: String?, firstMessage: String) {
+        if (id.isNullOrEmpty()) return
+        val clean = firstMessage.replace(Regex("\\s+"), " ").trim()
+        if (clean.isEmpty()) return
+        synchronized(sessionTitles) {
+            if (sessionTitles.containsKey(id)) return
+            sessionTitles[id] = if (clean.length <= 24) clean else clean.take(24) + "…"
+            saveSessionTitlesLocked()
+        }
+    }
+
     /** S4 侧栏拉会话列表（来自 ACP session/list） */
     fun refreshSessions() {
         viewModelScope.launch {
@@ -514,13 +581,18 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             _sessionsLoaded.value = true
+            synchronized(sessionTitles) { loadSessionTitlesLocked() }
             val list = ArrayList<Session>(arr.length())
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
+                val id = o.optString("sessionId")
+                val localTitle = synchronized(sessionTitles) { sessionTitles[id] }
                 list.add(
                     Session(
-                        id = o.optString("sessionId"),
-                        title = o.optString("title").ifEmpty { "未命名会话" },
+                        id = id,
+                        title = o.optString("title").ifEmpty {
+                            localTitle ?: "未命名会话"
+                        },
                         cwd = o.optString("cwd"),
                         updatedAt = o.optString("updatedAt"),
                     )
@@ -550,6 +622,9 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             Log.i(TAG, "deleteSession($id) removed=$removed")
+            synchronized(sessionTitles) {
+                if (sessionTitles.remove(id) != null) saveSessionTitlesLocked()
+            }
             refreshSessions()
         }
     }

@@ -162,6 +162,7 @@ object DshIcons {
     val AccountBalance = Icons.Filled.AccountBalance
     val ReceiptLong = Icons.Filled.ReceiptLong
     val FolderShared = Icons.Filled.FolderShared
+    val Archive = Icons.Filled.Archive
     val Inventory2 = Icons.Filled.Inventory2
     val DataObject = Icons.Filled.DataObject
     val Minimize = Icons.Filled.Minimize

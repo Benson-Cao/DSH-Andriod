@@ -80,6 +80,9 @@ class DshAcpClient(private val context: Context) {
     /** v30.9：会话是否活着（供 UI 判断"下发 config 选项"是否可达） */
     fun isActive(): Boolean = _phase.value == Phase.Ready && sessionId != null
 
+    /** v30.24：当前会话 id（无会话为 null）——App 侧会话标题注册表用 */
+    fun currentSessionId(): String? = sessionId
+
     @Volatile
     private var reader: BufferedReader? = null
 

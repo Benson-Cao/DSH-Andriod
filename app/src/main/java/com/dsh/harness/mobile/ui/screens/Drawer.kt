@@ -1,6 +1,7 @@
 package com.dsh.harness.mobile.ui.screens
 
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -456,16 +457,34 @@ private fun SessionRow(
             )
             Text(time, style = Type.meta.copy(fontSize = 10.sp), color = c.ink3)
         }
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            // v30.24：美化——圆角 14 + 1px 描边 + 柔和阴影 + 图标行，替代 M3 默认的素白小方块
+            shape = RoundedCornerShape(14.dp),
+            containerColor = c.card,
+            shadowElevation = 12.dp,
+            border = BorderStroke(1.dp, c.line),
+        ) {
             if (onArchive != null) {
                 DropdownMenuItem(
                     text = { Text("归档", style = Type.chip.copy(fontSize = 13.sp), color = c.ink) },
+                    leadingIcon = {
+                        Icon(DshIcons.Archive, null, Modifier.size(15.dp), tint = c.ink2)
+                    },
+                    modifier = Modifier.width(138.dp),
+                    contentPadding = PaddingValues(horizontal = 13.dp, vertical = 10.dp),
                     onClick = { menuOpen = false; onArchive() },
                 )
             }
             if (onDelete != null) {
                 DropdownMenuItem(
                     text = { Text("删除", style = Type.chip.copy(fontSize = 13.sp), color = c.danger) },
+                    leadingIcon = {
+                        Icon(DshIcons.DeleteOutline, null, Modifier.size(15.dp), tint = c.danger)
+                    },
+                    modifier = Modifier.width(138.dp),
+                    contentPadding = PaddingValues(horizontal = 13.dp, vertical = 10.dp),
                     onClick = { menuOpen = false; onDelete() },
                 )
             }
