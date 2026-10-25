@@ -815,21 +815,25 @@ fun BoxScope.S3ServiceSheet(
                 modifier = Modifier.padding(top = 11.dp),
             )
         },
-        // footer 按钮高度 = DshBtn 默认 Metrics.BTN_H = 46dp，**即设计稿 `.btn{height:46px}`**。
-        // ⚠️ 别再凭手感加高（v30.15→48dp、v30.16→56dp 都被用户打回）：要"和设计稿一致"
-        //    就是 46dp，不传 height 即可。设计稿无 Sheet 专属按钮高度，全稿 `.btn` 统一 46px。
+        // v30.18：footer 按钮高度 = 画布值 46dp × 设计稿手机端缩放系数（designZoom）。
+        // 设计稿 `.btn{height:46px}` 是 375px 画布里的值；手机上看设计稿会被整体缩放
+        // 铺满屏，所以真机上视觉高度 = 46×zoom（411~430dp 机型约 47~49dp）。
+        // ⚠️ 别再直接写死 46dp（那是画布值，真机上偏矮），也别凭手感加高。
         footer = {
+            val btnH = Metrics.BTN_H * designZoom()
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 DshBtn(
                     "关闭",
                     tone = BtnTone.Ghost,
                     modifier = Modifier.weight(1f),
+                    height = btnH,
                     onClick = onDismiss,
                 )
                 DshBtn(
                     "全部设置",
                     icon = DshIcons.Settings,
                     modifier = Modifier.weight(1.2f),
+                    height = btnH,
                     onClick = onAllSettings,
                 )
             }
@@ -981,7 +985,7 @@ fun BoxScope.S3MentionSheet(
             )
         },
         footer = {
-            DshBtn("关闭", tone = BtnTone.Ghost, onClick = onDismiss)
+            DshBtn("关闭", tone = BtnTone.Ghost, height = Metrics.BTN_H * designZoom(), onClick = onDismiss)
         },
     )
 }
@@ -1107,9 +1111,10 @@ fun BoxScope.S3EngineDiagnostics(
             }
         },
         footer = {
+            val btnH = Metrics.BTN_H * designZoom()
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                DshBtn("关闭", tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onDismiss)
-                DshBtn("重试连接", icon = DshIcons.Sync, modifier = Modifier.weight(1.3f), onClick = onRetry)
+                DshBtn("关闭", tone = BtnTone.Ghost, modifier = Modifier.weight(1f), height = btnH, onClick = onDismiss)
+                DshBtn("重试连接", icon = DshIcons.Sync, modifier = Modifier.weight(1.3f), height = btnH, onClick = onRetry)
             }
         },
     )
@@ -1241,7 +1246,7 @@ fun BoxScope.S29ModelSheet(
             )
         },
         footer = {
-            DshBtn("完成", tone = BtnTone.Ghost, onClick = onDone)
+            DshBtn("完成", tone = BtnTone.Ghost, height = Metrics.BTN_H * designZoom(), onClick = onDone)
         },
     )
 }

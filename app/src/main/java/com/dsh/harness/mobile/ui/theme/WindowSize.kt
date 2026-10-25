@@ -2,6 +2,7 @@ package com.dsh.harness.mobile.ui.theme
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -68,4 +69,25 @@ object DshDimens {
         DshWidth.Medium -> Space.xl       // 24
         DshWidth.Expanded -> 32.dp
     }
+}
+
+/**
+ * 设计稿「手机端缩放系数」—— 让 App 的固定高度令牌对上设计稿在你手机上的**视觉大小**。
+ *
+ * 背景：设计稿画布固定 375px，`.btn{height:46px}` 等值都是**画布值**。设计稿在手机浏览器里
+ * 会用 JS 把画板整体缩放铺满屏（见设计稿 mobile-runtime 段）：
+ * ```js
+ * var w = Math.max(288, Math.min(window.innerWidth - 28, 540));
+ * document.documentElement.style.setProperty('--zoom', (w / 375).toFixed(4));
+ * ```
+ * 所以你在手机上看到的按钮高度 = `46 × zoom`，**不是 46px**。
+ * 之前 App 直接用 46dp（画布值）→ 在 411~430dp 的机上比设计稿矮一截，用户三次反馈"太低"。
+ *
+ * 用法：`Metrics.BTN_H * designZoom()`。仅对**固定高度**令牌有意义
+ * （按钮/导航栏/行高）；宽度类令牌本就用 weight/fillMaxWidth，无需缩放。
+ */
+@Composable
+fun designZoom(): Float {
+    val w = LocalConfiguration.current.screenWidthDp.toFloat()
+    return (w - 28f).coerceIn(288f, 540f) / 375f
 }
