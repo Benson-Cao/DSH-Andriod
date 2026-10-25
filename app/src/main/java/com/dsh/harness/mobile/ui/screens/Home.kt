@@ -821,12 +821,14 @@ fun BoxScope.S3ServiceSheet(
                     "关闭",
                     tone = BtnTone.Ghost,
                     modifier = Modifier.weight(1f),
+                    height = 48.dp,
                     onClick = onDismiss,
                 )
                 DshBtn(
                     "全部设置",
                     icon = DshIcons.Settings,
                     modifier = Modifier.weight(1.2f),
+                    height = 48.dp,
                     onClick = onAllSettings,
                 )
             }
@@ -1238,7 +1240,7 @@ fun BoxScope.S29ModelSheet(
             )
         },
         footer = {
-            DshBtn("完成", tone = BtnTone.Ghost, onClick = onDone)
+            DshBtn("完成", tone = BtnTone.Ghost, height = 48.dp, onClick = onDone)
         },
     )
 }
@@ -1284,10 +1286,12 @@ private fun S29ModelRow(
             Spacer(Modifier.weight(1f))
             if (model.thinking != null) {
                 // 已声明推理等级：Off/High/Max 段控件与模型名同行
+                // v30.15：用户反馈按钮偏小 → tall 大号 + 加宽到 160dp
                 DshSeg(
                     options = levels,
                     selectedIndex = levels.indexOf(rowThinking).coerceAtLeast(0),
-                    modifier = Modifier.width(120.dp),
+                    modifier = Modifier.width(160.dp),
+                    tall = true,
                     onSelect = { onSelect(model.name, levels[it]) },
                 )
             } else {

@@ -364,12 +364,14 @@ fun DshSwitch(
 
 // ============================ 分段控件 ============================
 
-/** 设计稿 .seg：底 line2，内项选中时 card + 阴影，r8 */
+/** 设计稿 .seg：底 line2，内项选中时 card + 阴影，r8。
+ *  tall=true 用更大内距（模型 Sheet 的 Off/High/Max  reasoning 档位，触控目标更大）。 */
 @Composable
 fun DshSeg(
     options: List<String>,
     selectedIndex: Int,
     modifier: Modifier = Modifier,
+    tall: Boolean = false,
     onSelect: (Int) -> Unit,
 ) {
     val c = DshTheme.colors
@@ -389,7 +391,10 @@ fun DshSeg(
                         RoundedCornerShape(Radius.sm),
                     )
                     .clickable { onSelect(i) }
-                    .padding(vertical = 7.dp, horizontal = 4.dp),
+                    .padding(
+                        vertical = if (tall) 10.dp else 7.dp,
+                        horizontal = if (tall) 10.dp else 4.dp,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(

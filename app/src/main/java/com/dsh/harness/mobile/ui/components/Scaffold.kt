@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.dsh.harness.mobile.ui.theme.*
@@ -207,15 +208,16 @@ fun BoxScope.DshSheet(
     if (visible) {
         // v22 修订版 · 横屏/平板：Sheet 最大 480dp 居中（设计稿"Sheet max 480px centered"）。
         // 手机（Compact）必须走 fillMaxWidth() —— 与 v30.10 逐字节一致。
-        // ⚠️ 千万别用 widthIn(max = Dp.Infinity) 做"手机不限宽"：Dp.Infinity 进约束链后，
-        //    可滚动内容区（weight+verticalScroll）里的 fillMaxWidth 子节点会拿到异常宽度，
-        //    整块内容渲染不出来（真机实测：所有 Sheet 内容区全空，header/footer 却正常）。
         val compact = LocalDshWidth.current == DshWidth.Compact
+        // v30.15：Sheet **包裹内容高度**（短内容不再硬拉 88% 留下一大片空白），
+        // 最高仍封顶 88% 屏高；内容超高时才由内容列内滚。heightIn(max) 让 Column
+        // 走 wrap-content 向上取值，配合内容列 weight(fill=false) 即"短则包裹、长则封顶滚动"。
+        val maxSheetH = (LocalConfiguration.current.screenHeightDp * maxHeightRatio).dp
         Column(
             modifier = modifier
                 .align(Alignment.BottomCenter)
                 .then(if (compact) Modifier.fillMaxWidth() else Modifier.width(480.dp))
-                .fillMaxHeight(maxHeightRatio)
+                .heightIn(max = maxSheetH)
                 .clip(shape)
                 .background(c.sheet)
                 .clickable(
@@ -242,9 +244,10 @@ fun BoxScope.DshSheet(
             //    git 实证：v26(a4a5a06) 内容列无它 → 正常；v30.10(2ad89dc) 加上 → 空。
             //    恢复 v26 结构；底部避导航栏由 footer（有 windowInsetsBottomHeight，正常）
             //    或短内容天然不触底来保证，无 footer 的 Sheet 内容都在顶部，不会压导航栏。
+            // fill=false：内容列只取自身高度（不撑满），配合外层 heightIn 实现"短则包裹"。
             Column(
                 Modifier
-                    .weight(1f, fill = true)
+                    .weight(1f, fill = false)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = Space.sheet),
@@ -263,6 +266,11 @@ fun BoxScope.DshSheet(
                 ) {
                     footer()
                 }
+            } else {
+                // 无 footer 的 Sheet（权限档位/添加/附件）：包裹变短后末行会贴屏幕底，
+                // 补一个底部避导航栏的 Spacer。用 navigationBarsPadding 挂 Spacer（安全，
+                // DshScreen 同款）；切勿把 windowInsetsBottomHeight 挂到内容列（会引爆渲染）。
+                Spacer(Modifier.navigationBarsPadding())
             }
         }
     }
