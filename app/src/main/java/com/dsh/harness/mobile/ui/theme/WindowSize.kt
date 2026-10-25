@@ -2,7 +2,6 @@ package com.dsh.harness.mobile.ui.theme
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -71,23 +70,10 @@ object DshDimens {
     }
 }
 
-/**
- * 设计稿「手机端缩放系数」—— 让 App 的固定高度令牌对上设计稿在你手机上的**视觉大小**。
- *
- * 背景：设计稿画布固定 375px，`.btn{height:46px}` 等值都是**画布值**。设计稿在手机浏览器里
- * 会用 JS 把画板整体缩放铺满屏（见设计稿 mobile-runtime 段）：
- * ```js
- * var w = Math.max(288, Math.min(window.innerWidth - 28, 540));
- * document.documentElement.style.setProperty('--zoom', (w / 375).toFixed(4));
- * ```
- * 所以你在手机上看到的按钮高度 = `46 × zoom`，**不是 46px**。
- * 之前 App 直接用 46dp（画布值）→ 在 411~430dp 的机上比设计稿矮一截，用户三次反馈"太低"。
- *
- * 用法：`Metrics.BTN_H * designZoom()`。仅对**固定高度**令牌有意义
- * （按钮/导航栏/行高）；宽度类令牌本就用 weight/fillMaxWidth，无需缩放。
- */
-@Composable
-fun designZoom(): Float {
-    val w = LocalConfiguration.current.screenWidthDp.toFloat()
-    return (w - 28f).coerceIn(288f, 540f) / 375f
-}
+// 注：本文件曾提供 `designZoom()`（按设计稿预览器的「整画布缩放系数」放大固定高度令牌）。
+// 已删除 —— 那是设计稿*预览器*把 375px 画板铺满屏的预览行为，不是 App 该遵循的布局契约。
+// 真机 App 统一按「1 设计 px ≈ 1 dp」落地：设计稿 `.btn{height:46px}` = App 的
+// `Metrics.BTN_H = 46.dp`，与 App 内其它所有按钮一致（411~430dp 机器上其它按钮用户已确认
+// "没问题"）。footer 按钮已回退到默认 46dp，见 Home.kt 各 Sheet footer 注释。
+// 若日后确实需要整 App 按比例缩放（非仅 footer），应在此统一提供并应用到全部尺寸令牌，
+// 而不是只放大某一种控件——否则会出现这次的"footer 比其它按钮高"不一致。
