@@ -1200,6 +1200,15 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 onStorage = { drawerOpen = false; nav.go(Route.S50StorageDir) },
                 onNas = { drawerOpen = false; nav.go(Route.S51NasSync) },
                 onArchived = { drawerOpen = false; nav.go(Route.S48Archived) },
+                // v30.23：长按会话 → 删除/归档（真删文件/移入 sessions-archive，回执走 toast）
+                onDeleteSession = { id ->
+                    vm.deleteSession(id)
+                    toast = "会话已删除"
+                },
+                onArchiveSession = { id ->
+                    vm.archiveSession(id)
+                    toast = "会话已归档"
+                },
                 liveSessions = sessions,
                 keyConfigured = apiKey.configured,
             )

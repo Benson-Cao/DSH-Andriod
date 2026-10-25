@@ -296,8 +296,8 @@ fun S3Home(
 
                 // —— 工具行（v22 修订版：与 HTML 工具行逐像素对齐）——
                 // HTML：+（添加）/ 盾牌（权限档位）/ 附件（attach_file）/ 弹性 / 模型下拉 / 发送
-                // v30.22：三工具独立成组（间距 2dp，视觉更紧凑）+ 每钮加 soft 底色（用户指定）；
-                //         与右侧模型下拉之间仍保持 8dp。
+                // v30.23：三钮视觉间距 = 10dp（用户指定）——触区外扩收紧为 5dp/侧 + 组内 0dp 间距；
+                //         10+6×2=22dp 会比原版还松，视觉 10dp 只能靠收触区实现（触区仍有 42dp ≥ 40 达标）。
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -305,24 +305,27 @@ fun S3Home(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(0.dp),
                     ) {
                         DshIBtn(
                             DshIcons.Add, "添加",
                             enabled = workspaceChosen && !nasReadOnly,
                             bg = c.soft,
+                            touchSlop = 5.dp,
                             onClick = onOpenAdd,
                         )
                         DshIBtn(
                             DshIcons.Shield, "权限档位",
                             enabled = workspaceChosen && !nasReadOnly,
                             bg = c.soft,
+                            touchSlop = 5.dp,
                             onClick = onOpenPerm,
                         )
                         DshIBtn(
                             DshIcons.AttachFile, "附件",
                             enabled = workspaceChosen && !nasReadOnly,
                             bg = c.soft,
+                            touchSlop = 5.dp,
                             onClick = onOpenAttach,
                         )
                     }

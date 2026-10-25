@@ -4,12 +4,15 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -22,6 +25,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,6 +67,10 @@ fun BoxScope.S4Drawer(
     onExport: () -> Unit = {},
     /** v20：会话分组「已归档 · 全部」→ S48 归档管理 */
     onArchived: () -> Unit = {},
+    /** v30.23：长按会话 → 删除（真实文件删除 + 刷新列表） */
+    onDeleteSession: (String) -> Unit = {},
+    /** v30.23：长按会话 → 归档（移动到 .dsh/sessions-archive/ + 刷新列表） */
+    onArchiveSession: (String) -> Unit = {},
     modifier: Modifier = Modifier,
     selectedNav: Int = 0,
     /** 来自 ACP session/list 的真实会话；为空时退回设计稿演示数据 */
@@ -195,14 +203,14 @@ fun BoxScope.S4Drawer(
                 }
             }
 
-            // v22 修订版：手势提示（设计稿 9.5px ink3 + swipe_left 图标）
+            // v30.23：手势提示改为长按（左滑在窄列表行上易误触、且从未实现）
             Row(
                 Modifier.padding(start = 10.dp, top = 4.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Icon(DshIcons.SwipeLeft, null, Modifier.size(11.dp), tint = c.ink3)
-                Text("左滑会话可删除 / 归档", style = Type.meta.copy(fontSize = 9.5.sp), color = c.ink3)
+                Text("长按会话可删除 / 归档", style = Type.meta.copy(fontSize = 9.5.sp), color = c.ink3)
             }
 
             if (liveSessions.isNotEmpty()) {
@@ -227,7 +235,12 @@ fun BoxScope.S4Drawer(
                         )
                     }
                     sorted.forEach { s ->
-                        SessionRow(title = s.title, time = s.updatedAt.takeLast(5))
+                        SessionRow(
+                            title = s.title,
+                            time = s.updatedAt.takeLast(5),
+                            onDelete = { onDeleteSession(s.id) },
+                            onArchive = { onArchiveSession(s.id) },
+                        )
                     }
                 }
                 if (grouped.isEmpty()) {
@@ -239,16 +252,8 @@ fun BoxScope.S4Drawer(
                     )
                 }
             } else {
-                // 空态回落：沿用设计稿演示分组结构（会话直接挂在「工作区」头下）
-                SessionRow("生成 Q3 数据汇总 PPT", "19:32", selected = true)
-                SessionRow("准备明天评审会的议题清单", "昨天")
-
-                GroupHeader("数据分析项目", more = "12")
-                SessionRow("给销售报表补上同比 / 环比列", "周一")
-                SessionRow("关于代码运行能力的分析", "上周")
-
-                GroupHeader("DSH 插件开发")
-                // 空态：设计稿要求四态覆盖，「暂无会话」是真实承载点之一
+                // v30.23：删掉设计稿演示假数据（「生成 Q3 数据汇总 PPT」等），
+                //         改诚实空态——用户明确要求清退「未命名会话」式假列表。
                 Text(
                     "暂无会话",
                     style = Type.meta.copy(fontSize = 11.5.sp),
@@ -257,7 +262,12 @@ fun BoxScope.S4Drawer(
                 )
 
                 GroupHeader("已归档", more = "全部", onMoreClick = onArchived)
-                SessionRow("认识 DeepSeek Harness", "8/13")
+                Text(
+                    "暂无归档",
+                    style = Type.meta.copy(fontSize = 11.5.sp),
+                    color = c.ink3,
+                    modifier = Modifier.padding(start = 24.dp, top = 7.dp, bottom = 7.dp),
+                )
             }
         }
 
@@ -405,36 +415,61 @@ private fun SessionRow(
     title: String,
     time: String,
     selected: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    /** v30.23：长按弹出「归档 / 删除」菜单（替代设计稿的左滑手势——列表行窄，滑动手势易误触） */
+    onDelete: (() -> Unit)? = null,
+    onArchive: (() -> Unit)? = null,
 ) {
     val c = DshTheme.colors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) c.soft else Color.Transparent)
-            .clickable { }
-            .padding(start = 14.dp, end = 7.dp, top = 7.dp, bottom = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
-    ) {
-        if (selected) {
-            Box(
-                Modifier
-                    .width(2.5.dp)
-                    .height(13.dp)
-                    .background(c.brand, RoundedCornerShape(2.dp)),
+    var menuOpen by remember { mutableStateOf(false) }
+    val hasMenu = onDelete != null || onArchive != null
+    Box {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (selected) c.soft else Color.Transparent)
+                .clickable { onClick?.invoke() }
+                .pointerInput(hasMenu) {
+                    if (hasMenu) detectTapGestures(onLongPress = { menuOpen = true })
+                }
+                .padding(start = 14.dp, end = 7.dp, top = 7.dp, bottom = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            if (selected) {
+                Box(
+                    Modifier
+                        .width(2.5.dp)
+                        .height(13.dp)
+                        .background(c.brand, RoundedCornerShape(2.dp)),
+                )
+            }
+            Text(
+                title,
+                style = Type.chip.copy(fontSize = 12.5.sp),
+                color = if (selected) c.brand else c.ink2,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            Text(time, style = Type.meta.copy(fontSize = 10.sp), color = c.ink3)
         }
-        Text(
-            title,
-            style = Type.chip.copy(fontSize = 12.5.sp),
-            color = if (selected) c.brand else c.ink2,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Text(time, style = Type.meta.copy(fontSize = 10.sp), color = c.ink3)
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            if (onArchive != null) {
+                DropdownMenuItem(
+                    text = { Text("归档", style = Type.chip.copy(fontSize = 13.sp), color = c.ink) },
+                    onClick = { menuOpen = false; onArchive() },
+                )
+            }
+            if (onDelete != null) {
+                DropdownMenuItem(
+                    text = { Text("删除", style = Type.chip.copy(fontSize = 13.sp), color = c.danger) },
+                    onClick = { menuOpen = false; onDelete() },
+                )
+            }
+        }
     }
 }
 

@@ -2,6 +2,7 @@ package com.dsh.harness.mobile.data
 
 import android.app.Application
 import android.util.Log
+import java.io.File
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -526,6 +527,54 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             _sessions.value = list
+        }
+    }
+
+    /**
+     * v30.23：删除会话（真实后端 = 会话目录删除）。
+     *
+     * ACP 协议没注册 session/delete（dsh-acp 只有 new/list/resume/close/setConfigOption/
+     * prompt/cancel），但会话本体就是 `<home>/.dsh/sessions/<cwd分组>/<sessionId>/` 下的
+     * session.v3.jsonl.zstd —— App 自己拥有这个文件系统，直接删目录再刷新列表，
+     * session/list 自然不再返回它。这是真删除，不是画假按钮。
+     */
+    fun deleteSession(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val root = File(DshBootstrapAccess.homeDir(getApplication()), ".dsh/sessions")
+            var removed = false
+            root.listFiles()?.forEach { group ->
+                if (!group.isDirectory) return@forEach
+                val dir = File(group, id)
+                if (dir.exists() && dir.isDirectory) {
+                    removed = dir.deleteRecursively() || removed
+                }
+            }
+            Log.i(TAG, "deleteSession($id) removed=$removed")
+            refreshSessions()
+        }
+    }
+
+    /**
+     * v30.23：归档会话 = 把会话目录移出 sessions/（session/list 扫描不到即从列表消失），
+     * 落到 `<home>/.dsh/sessions-archive/<cwd分组>/<sessionId>/`，文件原样保留可恢复。
+     */
+    fun archiveSession(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val home = DshBootstrapAccess.homeDir(getApplication())
+            val root = File(home, ".dsh/sessions")
+            val archive = File(home, ".dsh/sessions-archive")
+            var moved = false
+            root.listFiles()?.forEach { group ->
+                if (!group.isDirectory) return@forEach
+                val dir = File(group, id)
+                if (dir.exists() && dir.isDirectory) {
+                    val dest = File(File(archive, group.name), id)
+                    dest.parentFile?.mkdirs()
+                    moved = dir.renameTo(dest) || moved
+                }
+            }
+            Log.i(TAG, "archiveSession($id) moved=$moved")
+            refreshSessions()
         }
     }
 

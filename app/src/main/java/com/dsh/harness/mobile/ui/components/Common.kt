@@ -224,6 +224,8 @@ fun DshIBtn(
     bg: Color? = null,
     size: Dp = Metrics.IBTN,
     enabled: Boolean = true,
+    /** 触摸区外扩量；v30.23 首页工具行三钮并排时用 5dp 换取 10dp 视觉间距 */
+    touchSlop: Dp = Metrics.IBTN_TOUCH_SLOP,
     onClick: () -> Unit,
 ) {
     val c = DshTheme.colors
@@ -234,8 +236,8 @@ fun DshIBtn(
 
     Box(
         modifier = modifier
-            // 触摸区外扩 4：撑满父级给的约束，不改变视觉
-            .sizeIn(minWidth = size + Metrics.IBTN_TOUCH_SLOP * 2, minHeight = size + Metrics.IBTN_TOUCH_SLOP * 2)
+            // 触摸区外扩：撑满父级给的约束，不改变视觉
+            .sizeIn(minWidth = size + touchSlop * 2, minHeight = size + touchSlop * 2)
             .clickable(enabled = enabled, interactionSource = interaction, indication = null) { onClick() },
         contentAlignment = Alignment.Center,
     ) {
