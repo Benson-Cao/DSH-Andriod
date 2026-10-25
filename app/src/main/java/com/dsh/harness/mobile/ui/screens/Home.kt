@@ -815,20 +815,21 @@ fun BoxScope.S3ServiceSheet(
                 modifier = Modifier.padding(top = 11.dp),
             )
         },
+        // footer 按钮高度 = DshBtn 默认 Metrics.BTN_H = 46dp，**即设计稿 `.btn{height:46px}`**。
+        // ⚠️ 别再凭手感加高（v30.15→48dp、v30.16→56dp 都被用户打回）：要"和设计稿一致"
+        //    就是 46dp，不传 height 即可。设计稿无 Sheet 专属按钮高度，全稿 `.btn` 统一 46px。
         footer = {
             Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                 DshBtn(
                     "关闭",
                     tone = BtnTone.Ghost,
                     modifier = Modifier.weight(1f),
-                    height = 56.dp,
                     onClick = onDismiss,
                 )
                 DshBtn(
                     "全部设置",
                     icon = DshIcons.Settings,
                     modifier = Modifier.weight(1.2f),
-                    height = 56.dp,
                     onClick = onAllSettings,
                 )
             }
@@ -1240,7 +1241,7 @@ fun BoxScope.S29ModelSheet(
             )
         },
         footer = {
-            DshBtn("完成", tone = BtnTone.Ghost, height = 56.dp, onClick = onDone)
+            DshBtn("完成", tone = BtnTone.Ghost, onClick = onDone)
         },
     )
 }
