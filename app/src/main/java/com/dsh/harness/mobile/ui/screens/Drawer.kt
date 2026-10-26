@@ -5,7 +5,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -28,6 +29,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dsh.harness.mobile.ui.components.*
@@ -72,6 +74,8 @@ fun BoxScope.S4Drawer(
     onDeleteSession: (String) -> Unit = {},
     /** v30.23：长按会话 → 归档（移动到 .dsh/sessions-archive/ + 刷新列表） */
     onArchiveSession: (String) -> Unit = {},
+    /** v30.25：点击会话 → 恢复该会话并跳到对话页 */
+    onOpenSession: (com.dsh.harness.mobile.data.DshViewModel.Session) -> Unit = {},
     modifier: Modifier = Modifier,
     selectedNav: Int = 0,
     /** 来自 ACP session/list 的真实会话；为空时退回设计稿演示数据 */
@@ -204,16 +208,6 @@ fun BoxScope.S4Drawer(
                 }
             }
 
-            // v30.23：手势提示改为长按（左滑在窄列表行上易误触、且从未实现）
-            Row(
-                Modifier.padding(start = 10.dp, top = 4.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(DshIcons.SwipeLeft, null, Modifier.size(11.dp), tint = c.ink3)
-                Text("长按会话可删除 / 归档", style = Type.meta.copy(fontSize = 9.5.sp), color = c.ink3)
-            }
-
             if (liveSessions.isNotEmpty()) {
                 // 真实数据：按 cwd（工作区）分组 + 搜索过滤 + 排序，与设计稿「按工作区分组」一致
                 val q = wsQuery.trim()
@@ -239,6 +233,7 @@ fun BoxScope.S4Drawer(
                         SessionRow(
                             title = s.title,
                             time = s.updatedAt.takeLast(5),
+                            onClick = { onOpenSession(s) },
                             onDelete = { onDeleteSession(s.id) },
                             onArchive = { onArchiveSession(s.id) },
                         )
@@ -411,6 +406,7 @@ private fun GroupHeader(title: String, more: String? = null, onMoreClick: (() ->
 }
 
 /** 会话行 .srow：内距 7/14/7/24，r8；选中时左侧有 2.5px 品牌色竖条 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRow(
     title: String,
@@ -431,10 +427,12 @@ private fun SessionRow(
                 .padding(horizontal = 8.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(if (selected) c.soft else Color.Transparent)
-                .clickable { onClick?.invoke() }
-                .pointerInput(hasMenu) {
-                    if (hasMenu) detectTapGestures(onLongPress = { menuOpen = true })
-                }
+                // v30.25：用 combinedClickable 处理「短按=跳转 / 长按=菜单」，二者互斥且自带 ripple；
+                // 之前 clickable + pointerInput(detectTapGestures) 的组合会被长按手势吃掉短按 → 点击失效。
+                .combinedClickable(
+                    onClick = { onClick?.invoke() },
+                    onLongClick = { if (hasMenu) menuOpen = true },
+                )
                 .padding(start = 14.dp, end = 7.dp, top = 7.dp, bottom = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -460,6 +458,8 @@ private fun SessionRow(
         DropdownMenu(
             expanded = menuOpen,
             onDismissRequest = { menuOpen = false },
+            // v30.25：弹出位置右移，避开抽屉左缘被屏幕边缘截齐
+            offset = DpOffset(x = 20.dp, y = 0.dp),
             // v30.24：美化——圆角 14 + 1px 描边 + 柔和阴影 + 图标行，替代 M3 默认的素白小方块
             shape = RoundedCornerShape(14.dp),
             containerColor = c.card,

@@ -1209,6 +1209,12 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     vm.archiveSession(id)
                     toast = "会话已归档"
                 },
+                // v30.25：点击会话 → 恢复并跳到对话页（ACP 不回放历史，S5 进入干净态）
+                onOpenSession = { session ->
+                    drawerOpen = false
+                    vm.openSession(session)
+                    nav.go(Route.S5ChatRunning)
+                },
                 liveSessions = sessions,
                 keyConfigured = apiKey.configured,
             )

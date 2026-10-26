@@ -430,6 +430,37 @@ class DshAcpClient(private val context: Context) {
         null
     }
 
+    /**
+     * 恢复（打开）已存在的持久会话：session/resume（ACP 已注册，但本客户端此前没封装）。
+     * 恢复后该会话成为当前会话，后续 prompt 续写到它上面；configOptions 一并拉回（供 S9）。
+     * 注意：ACP 不支持历史回放，所以恢复后聊天记录不会重放——S5 会显示为空，直到新消息。
+     */
+    suspend fun resumeSession(sessionIdArg: String): String? = withContext(Dispatchers.IO) {
+        val id = nextId++
+        val params = JSONObject().put("sessionId", sessionIdArg)
+        if (!send(JSONObject()
+                .put("jsonrpc", "2.0").put("id", id)
+                .put("method", "session/resume").put("params", params))) return@withContext null
+        val deadline = System.currentTimeMillis() + HANDSHAKE_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            results[id]?.let { rsp ->
+                val sid = rsp.optString("sessionId")
+                    .ifEmpty { rsp.optJSONObject("session")?.optString("sessionId") ?: "" }
+                if (sid.isNotEmpty()) {
+                    sessionId = sid
+                    lastConfigOptions = rsp.optJSONArray("configOptions") ?: JSONArray()
+                    emit("会话已恢复：$sid")
+                    return@withContext sid
+                }
+            }
+            delay(30)
+        }
+        // 兜底：引擎已收到 resume、只是回包形状未知 → 仍切到目标会话，避免功能静默失效
+        sessionId = sessionIdArg
+        emit("会话已恢复（回包超时，按传入 id 切换）：$sessionIdArg")
+        sessionIdArg
+    }
+
     /** 中断当前提示词（协议：session/cancel）。这是唯一真实的"停止"路径。 */
     suspend fun cancel(): Boolean = withContext(Dispatchers.IO) {
         val sid = sessionId ?: return@withContext false

@@ -2,6 +2,7 @@ package com.dsh.harness.mobile.data
 
 import android.app.Application
 import android.util.Log
+import java.io.File
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import com.dsh.harness.mobile.ui.screens.EventKind
+import com.dsh.harness.mobile.ui.screens.TrajectoryEvent
 
 /**
  * UI 与 ACP 之间的翻译层。
@@ -22,15 +25,22 @@ import org.json.JSONObject
  *   S5 发送消息      → prompt(text)
  *   S5 工具调用组    → ToolCall 列表（session/update 的 tool_call 生命周期）
  *   S5 子代理        → subagent 事件
- *   S7 审批 Sheet    → PendingPermission（客户端目前自动放行，UI 上可改为手动）
+ *   S7 审批 Sheet    → pendingPermission（真实协议请求，用户点选后才应答）
  *   S4 侧栏会话列表  → listSessions(cwd)
  *   S9 模型/思考强度 → setConfigOption("model"/"reasoning_effort")
  */
 class DshViewModel(app: Application) : AndroidViewModel(app) {
 
-    companion object { private const val TAG = "DshVM" }
+    companion object {
+        private const val TAG = "DshVM"
+        /** ACP thought_level 选项里「跟随模型默认」的哨兵值（dsh-acp: PROVIDER_DEFAULT_REASONING_VALUE） */
+        const val PROVIDER_DEFAULT_REASONING = "provider-default"
+    }
 
     private val client = DshAcpClient(app)
+
+    /** v30.8：导出用量快照等需要 Context 的地方统一用这个（不依赖 getApplication()） */
+    private val appCtx: Application = app
 
     // ==================== 对话状态 ====================
 
@@ -67,6 +77,14 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
     val sessions: StateFlow<List<Session>> = _sessions
 
     /**
+     * session/list 是否真的成功取到过。
+     * v30.9：S48 归档页要区分「没有会话」与「进程没起来读不到」——
+     * 空列表 + false 是后者的诚实空态，不能画成"暂无归档"。
+     */
+    private val _sessionsLoaded = MutableStateFlow(false)
+    val sessionsLoaded: StateFlow<Boolean> = _sessionsLoaded
+
+    /**
      * S8 轨迹用：把 session/update 的事件按时间顺序攒成时间线。
      * ACP 不支持历史回放，所以这里只记录**本次会话**的事件（进程内累积）。
      */
@@ -90,6 +108,46 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
     private val _models = MutableStateFlow<List<ModelOption>>(emptyList())
     val models: StateFlow<List<ModelOption>> = _models
 
+    /**
+     * S3 输入框右下角 / S29 模型选择器共享的"当前模型 + 思考强度"显示态。
+     * 真实引擎连上时，`selectModel`/`selectThinking` 也会回写这里，
+     * 让首页那行"DeepSeek-V4-Flash High ▾"始终反映最新选择。
+     */
+    private val _modelName = MutableStateFlow("DeepSeek-V4-Flash")
+    val modelName: StateFlow<String> = _modelName
+    // v30.9：值统一为 ACP reasoning_effort 真值（off/low/high/max，小写），
+    // 因为回传 session/set_config_option 时必须原样送。显示层用 thinkingLabel() 转中文。
+    private val _thinking = MutableStateFlow("high")
+    val thinking: StateFlow<String> = _thinking
+
+    /**
+     * 当前模型真实支持的思考强度档位（来自 ACP configOptions 的 category=="thought_level"）。
+     * 真值：DeepSeek 的 reasoning effort 硬校验只有 off/low/high/max 四档
+     * （dsh-llm-deepseek/lib/index.js reasoningEffort()，其他值直接抛 UNSUPPORTED_REASONING_EFFORT），
+     * 且**每个模型可不同**（模型不声明 reasoning 时该项整个不出现）。
+     * 拿不到时回落四档，不拿设计稿的「低/中/高」充数（「中」不是真档位）。
+     */
+    private val _thinkingLevels = MutableStateFlow(listOf("off", "low", "high", "max"))
+    val thinkingLevels: StateFlow<List<String>> = _thinkingLevels
+    private val _thinkingLevelsKnown = MutableStateFlow(false)
+    val thinkingLevelsKnown: StateFlow<Boolean> = _thinkingLevelsKnown
+    private val _autoModel = MutableStateFlow(false)
+    val autoModel: StateFlow<Boolean> = _autoModel
+
+    /**
+     * S29：单纯更新显示态（含自定义提供方等占位模型，不下发到真实引擎）。
+     * v30.9：thinking 是 ACP 真值 off/low/high/max；保存时若会话活着也顺手下发，
+     * 让「默认模型与思考强度」不只改显示。
+     */
+    fun setModelDisplay(name: String, thinking: String) {
+        _modelName.value = name
+        _thinking.value = thinking
+        if (client.isActive()) {
+            viewModelScope.launch { client.setConfigOption("reasoning_effort", thinking) }
+        }
+    }
+    fun setAutoModel(on: Boolean) { _autoModel.value = on }
+
     private val _busy = MutableStateFlow(false)
     /** 运行中：对应 S5 的"执行中 · 第 N 步"与停止/排队条 */
     val busy: StateFlow<Boolean> = _busy
@@ -97,6 +155,23 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
     /** 上下文占用百分比（来自 usage_update），对应设计稿右上角的 "34%" */
     private val _contextUsage = MutableStateFlow<Int?>(null)
     val contextUsage: StateFlow<Int?> = _contextUsage
+
+    /**
+     * v30.8：真实 token 用量。
+     *
+     * ACP 的 `usage_update` 只给当前上下文的 used/size，不给账单。
+     * 这里在**每次 usage_update 时取 used 的增量**累加成「本次会话已用 token」，
+     * 并记录最后一次上报的 size 作为上下文窗口上限 —— S35 用量页据此出真实数字。
+     */
+    private val _tokensUsed = MutableStateFlow(0L)
+    val tokensUsed: StateFlow<Long> = _tokensUsed
+    private val _tokensWindow = MutableStateFlow(0L)
+    val tokensWindow: StateFlow<Long> = _tokensWindow
+    /** 累计上报次数（= usage_update 到达的次数，用作"数据点数量"的诚实指标） */
+    private val _usageSamples = MutableStateFlow(0)
+    val usageSamples: StateFlow<Int> = _usageSamples
+    /** 上一次 usage_update 上报的 used（用于算增量） */
+    private var lastReportedUsed = 0L
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
@@ -133,6 +208,93 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
 
     /** S23「导出脱敏日志」：返回落盘路径，失败为 null */
     fun exportRedactedLog(): String? = catalogLoader.writeRedactedLog(_catalog.value)?.absolutePath
+
+    /**
+     * v30.8：S35「导出用量快照」——把本次会话的真实 token 用量写成 JSONL。
+     * 数据全部来自 ACP usage_update 的真实上报，不含任何编造数字。
+     * @return 落盘路径；失败为 null
+     */
+    fun exportUsageSnapshot(): String? = try {
+        val dir = java.io.File(DshBootstrapAccess.homeDir(appCtx), ".dsh")
+        if (!dir.exists()) dir.mkdirs()
+        val f = java.io.File(dir, "usage-snapshot.jsonl")
+        val line = org.json.JSONObject().apply {
+            put("exportedAt", System.currentTimeMillis())
+            put("model", _modelName.value)
+            put("thinking", _thinking.value)
+            put("tokensUsed", _tokensUsed.value)
+            put("tokensWindow", _tokensWindow.value)
+            put("usageSamples", _usageSamples.value)
+            put("sessionCount", _sessions.value.size)
+            put("messageCount", _messages.value.size)
+            put("toolCallCount", _tools.value.size)
+        }.toString()
+        f.writeText(line + "\n")
+        f.absolutePath
+    } catch (t: Throwable) {
+        Log.e(TAG, "写用量快照失败", t)
+        null
+    }
+
+    // ==================== 插件市场精选目录（S21/S22） ====================
+
+    /**
+     * 社区市场精选目录。数据源是 npm 上的 dsh-plugin-catalog 包
+     * （china 路由走 npmmirror），与 dshmarket 包自己的 regions.js 一致。
+     * null = 还没拉过 / 拉失败。
+     */
+    private val _marketCatalog = MutableStateFlow<DshMarketCatalog.Catalog?>(null)
+    val marketCatalog: StateFlow<DshMarketCatalog.Catalog?> = _marketCatalog
+
+    private val _marketCatalogLoading = MutableStateFlow(false)
+    val marketCatalogLoading: StateFlow<Boolean> = _marketCatalogLoading
+
+    /** 拉取失败原因（网络不可达 / 解析失败）；重试会清掉 */
+    private val _marketCatalogError = MutableStateFlow<String?>(null)
+    val marketCatalogError: StateFlow<String?> = _marketCatalogError
+
+    /** 进入市场页时拉一次；已在 loading 或已有数据则跳过 */
+    fun refreshMarketCatalog(force: Boolean = false) {
+        if (_marketCatalogLoading.value) return
+        if (!force && _marketCatalog.value != null) return
+        _marketCatalogLoading.value = true
+        _marketCatalogError.value = null
+        viewModelScope.launch {
+            try {
+                _marketCatalog.value = DshMarketCatalog.load()
+            } catch (t: Throwable) {
+                Log.w(TAG, "市场目录拉取失败", t)
+                _marketCatalogError.value = t.message ?: "市场目录拉取失败"
+            } finally {
+                _marketCatalogLoading.value = false
+            }
+        }
+    }
+
+    // ==================== 权限审批（S7） ====================
+
+    /**
+     * 待审批的权限请求（ACP session/request_permission）。null = 当前没有。
+     *
+     * v25 前客户端在协议层**自动放行**（扫 options 选 allow 直接回），
+     * UI 上的 S7 Sheet 只是演示：点「拒绝」命令照样执行（用户实测截图）。
+     * 现在请求先落到这个 StateFlow，由 UI 弹 Sheet、用户点选后应答。
+     */
+    val pendingPermission: StateFlow<DshAcpClient.PendingPermission?> = client.pendingPermission
+
+    /** 用户点了某个协议选项（optionId 原样回传，如 "allow-once"） */
+    fun respondPermission(optionId: String) {
+        client.respondPermission(optionId)
+    }
+
+    /** 用户取消（拖走 Sheet / 返回键）——按 cancelled 应答，dsh 侧视为拒绝 */
+    fun cancelPermission() {
+        client.respondPermission(null)
+    }
+
+    /** 审批 Sheet 展示用：按 toolCallId 找触发工具（协议还没推 tool_call 时返回 null） */
+    fun toolCallOf(toolCallId: String): ToolCall? =
+        _tools.value.firstOrNull { it.id == toolCallId }
 
     // ==================== API 密钥（S19 API Key） ====================
 
@@ -236,6 +398,11 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                 _messages.value = emptyList()
                 _tools.value = emptyList()
                 _contextUsage.value = null
+                // v30.8：新会话 → token 用量归零（否则跨会话累加会算错）
+                _tokensUsed.value = 0L
+                _tokensWindow.value = 0L
+                _usageSamples.value = 0
+                lastReportedUsed = 0L
                 parseConfigOptions()
             } else {
                 _workspace.value = null
@@ -257,6 +424,8 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         )
         viewModelScope.launch {
             _busy.value = true
+            // v30.24：首条消息给会话起标题（App 侧注册表，引擎不落盘标题）
+            rememberSessionTitle(client.currentSessionId(), clean)
             val stop = client.prompt(clean)
             _busy.value = false
             // 把助手消息的"流式"标记关掉（下一轮 chunk 会另起一条）
@@ -273,8 +442,10 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** S9 切换模型 */
+    /** S9 切换模型（真实引擎）；同步回写显示态让首页那行模型名跟着变 */
     fun selectModel(optionValue: String) {
+        val opt = _models.value.firstOrNull { it.value == optionValue }
+        if (opt != null) _modelName.value = opt.name
         viewModelScope.launch { client.setConfigOption("model", optionValue) }
     }
 
@@ -289,6 +460,20 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun parseConfigOptions() {
         val arr = client.configOptions()
+        val levels = ArrayList<String>()
+        for (i in 0 until arr.length()) {
+            val opt = arr.optJSONObject(i) ?: continue
+            if (opt.optString("category") != "thought_level") continue
+            val opts = opt.optJSONArray("options") ?: continue
+            for (k in 0 until opts.length()) {
+                val v = opts.optJSONObject(k)?.optString("value") ?: continue
+                if (v.isNotEmpty() && v != PROVIDER_DEFAULT_REASONING) levels.add(v)
+            }
+        }
+        if (levels.isNotEmpty()) {
+            _thinkingLevels.value = levels
+            _thinkingLevelsKnown.value = true
+        }
         val out = ArrayList<ModelOption>()
         for (i in 0 until arr.length()) {
             val opt = arr.optJSONObject(i) ?: continue
@@ -314,33 +499,186 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** S9 切换思考强度 */
+    /** S9 切换思考强度（真实引擎）；同步回写显示态 */
     fun selectThinking(value: String) {
+        _thinking.value = value
         viewModelScope.launch { client.setConfigOption("reasoning_effort", value) }
     }
 
-    /** S4 侧栏拉会话列表（来自 ACP session/list） */
+    // ==================== v30.24 会话标题（App 侧注册表） ====================
+
+    /**
+     * ACP session/list 的 title 恒为空（dsh 引擎不落盘标题，会话本体是
+     * session.v3.jsonl.zstd，App 侧没有 zstd 解码器读不回历史消息）。
+     * 所以标题由 App 自己记：对本会话发出的**第一条消息**取前 24 字，
+     * 存 `<home>/.dsh/session-titles.json`（原子写：tmp+rename）。
+     * 展示优先级：引擎 title > 本地注册表 > 「未命名会话」。
+     */
+    private val sessionTitles = HashMap<String, String>()
+    private var sessionTitlesLoaded = false
+
+    private fun titlesFile(): File =
+        File(DshBootstrapAccess.homeDir(getApplication()), ".dsh/session-titles.json")
+
+    /** 只在 refreshSessions 前调用一次；读失败静默（等于全部回落"未命名会话"） */
+    private fun loadSessionTitlesLocked() {
+        if (sessionTitlesLoaded) return
+        sessionTitlesLoaded = true
+        try {
+            val f = titlesFile()
+            if (!f.exists()) return
+            val obj = JSONObject(f.readText())
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val v = obj.optString(k)
+                if (k.isNotEmpty() && v.isNotEmpty()) sessionTitles[k] = v
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "会话标题注册表读取失败", t)
+        }
+    }
+
+    /** 原子写注册表（tmp + rename），只动自己的文件，绝不碰 sessions/ 本体 */
+    private fun saveSessionTitlesLocked() {
+        try {
+            val obj = JSONObject()
+            sessionTitles.forEach { (k, v) -> obj.put(k, v) }
+            val text = obj.toString()
+            val f = titlesFile()
+            f.parentFile?.mkdirs()
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(text)
+            if (!tmp.renameTo(f)) {
+                f.writeText(text)
+                tmp.delete()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "会话标题注册表写入失败", t)
+        }
+    }
+
+    /** 首条消息 → 标题（first-wins：已有标题的会话不覆盖） */
+    private fun rememberSessionTitle(id: String?, firstMessage: String) {
+        if (id.isNullOrEmpty()) return
+        val clean = firstMessage.replace(Regex("\\s+"), " ").trim()
+        if (clean.isEmpty()) return
+        synchronized(sessionTitles) {
+            if (sessionTitles.containsKey(id)) return
+            sessionTitles[id] = if (clean.length <= 24) clean else clean.take(24) + "…"
+            saveSessionTitlesLocked()
+        }
+    }
+
+    /**
+     * v30.25：从侧栏点击会话 → 恢复该会话并切到对话页。
+     * 恢复后清空本地消息/工具/用量（ACP 不回放历史），让 S5 以干净态进入该会话；
+     * workspace 设为该会话的 cwd，输入区恢复可用。
+     */
+    fun openSession(session: Session) {
+        viewModelScope.launch {
+            _busy.value = true
+            val ok = client.resumeSession(session.id)
+            _busy.value = false
+            if (ok != null) {
+                _workspace.value = session.cwd.ifEmpty { null }
+                _messages.value = emptyList()
+                _tools.value = emptyList()
+                _contextUsage.value = null
+                lastReportedUsed = 0L
+                _tokensUsed.value = 0L
+                _tokensWindow.value = 0L
+                _usageSamples.value = 0
+                parseConfigOptions()
+            } else {
+                _error.value = "恢复会话失败（引擎无响应）"
+            }
+        }
+    }
+
+    /**
+     * S4 侧栏拉会话列表（来自 ACP session/list）。
+     * v30.25 修正：抽屉是**全局会话列表**，必须列出全部会话，不能按当前工作区(_workspace)过滤——
+     * 否则 openSession 把 _workspace 设成某会话的 cwd 后，刷新只列该工作区的会话，抽屉直接变空。
+     */
     fun refreshSessions() {
         viewModelScope.launch {
-            val cwd = _workspace.value
-            val arr = client.listSessions(cwd)
+            val arr = client.listSessions(null)
             if (arr == null) {
                 _sessions.value = emptyList()
+                _sessionsLoaded.value = false
                 return@launch
             }
+            _sessionsLoaded.value = true
+            synchronized(sessionTitles) { loadSessionTitlesLocked() }
             val list = ArrayList<Session>(arr.length())
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
+                val id = o.optString("sessionId")
+                val localTitle = synchronized(sessionTitles) { sessionTitles[id] }
                 list.add(
                     Session(
-                        id = o.optString("sessionId"),
-                        title = o.optString("title").ifEmpty { "未命名会话" },
+                        id = id,
+                        title = o.optString("title").ifEmpty {
+                            localTitle ?: "未命名会话"
+                        },
                         cwd = o.optString("cwd"),
                         updatedAt = o.optString("updatedAt"),
                     )
                 )
             }
             _sessions.value = list
+        }
+    }
+
+    /**
+     * v30.23：删除会话（真实后端 = 会话目录删除）。
+     *
+     * ACP 协议没注册 session/delete（dsh-acp 只有 new/list/resume/close/setConfigOption/
+     * prompt/cancel），但会话本体就是 `<home>/.dsh/sessions/<cwd分组>/<sessionId>/` 下的
+     * session.v3.jsonl.zstd —— App 自己拥有这个文件系统，直接删目录再刷新列表，
+     * session/list 自然不再返回它。这是真删除，不是画假按钮。
+     */
+    fun deleteSession(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val root = File(DshBootstrapAccess.homeDir(getApplication()), ".dsh/sessions")
+            var removed = false
+            root.listFiles()?.forEach { group ->
+                if (!group.isDirectory) return@forEach
+                val dir = File(group, id)
+                if (dir.exists() && dir.isDirectory) {
+                    removed = dir.deleteRecursively() || removed
+                }
+            }
+            Log.i(TAG, "deleteSession($id) removed=$removed")
+            synchronized(sessionTitles) {
+                if (sessionTitles.remove(id) != null) saveSessionTitlesLocked()
+            }
+            refreshSessions()
+        }
+    }
+
+    /**
+     * v30.23：归档会话 = 把会话目录移出 sessions/（session/list 扫描不到即从列表消失），
+     * 落到 `<home>/.dsh/sessions-archive/<cwd分组>/<sessionId>/`，文件原样保留可恢复。
+     */
+    fun archiveSession(id: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val home = DshBootstrapAccess.homeDir(getApplication())
+            val root = File(home, ".dsh/sessions")
+            val archive = File(home, ".dsh/sessions-archive")
+            var moved = false
+            root.listFiles()?.forEach { group ->
+                if (!group.isDirectory) return@forEach
+                val dir = File(group, id)
+                if (dir.exists() && dir.isDirectory) {
+                    val dest = File(File(archive, group.name), id)
+                    dest.parentFile?.mkdirs()
+                    moved = dir.renameTo(dest) || moved
+                }
+            }
+            Log.i(TAG, "archiveSession($id) moved=$moved")
+            refreshSessions()
         }
     }
 
@@ -375,7 +713,9 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                     _messages.value = _messages.value + ChatMessage(
                         id = "u-${System.nanoTime()}", role = Role.User, text = t,
                     )
-                    pushEvent("U", "用户输入", t.take(60))
+                    pushEvent(EventKind.User, "用户输入", t.take(60))
+                    // 一轮 = 一次用户提示触发一次模型请求（请求 #N 与轮次同号）
+                    pushEvent(EventKind.Request, "模型请求", "")
                 }
             }
 
@@ -422,7 +762,9 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                     name = title,
                     detail = detail,
                 )
-                pushEvent("T", title, detail)
+                // 子代理在官方语义里是「子工具」记录，而非独立大卡
+                val kind = if (title.contains("subagent", ignoreCase = true)) EventKind.SubTool else EventKind.Tool
+                pushEvent(kind, title, detail)
             }
 
             "tool_call_update" -> {
@@ -443,6 +785,16 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                 val size = update.optLong("size", 0L)
                 if (size > 0) {
                     _contextUsage.value = (used * 100.0 / size).toInt().coerceIn(0, 100)
+                }
+                // v30.8：累加真实 token 用量。
+                // usage_update 的 used 是**当前上下文总量**，不是增量；
+                // 所以增量 = used - 上次上报的 used（首次 = used 本身）。
+                if (used > 0) {
+                    val delta = maxOf(0L, used - lastReportedUsed)
+                    lastReportedUsed = used
+                    _tokensUsed.value = _tokensUsed.value + delta
+                    _tokensWindow.value = maxOf(_tokensWindow.value, size)
+                    _usageSamples.value = _usageSamples.value + 1
                 }
             }
 
@@ -486,10 +838,21 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         return content.optString("text")
     }
 
-    /** 往时间线追加一个事件（上限 200 条，防止长会话无限增长） */
-    private fun pushEvent(tag: String, title: String, detail: String) {
-        _events.value = (_events.value + com.dsh.harness.mobile.ui.screens.TrajectoryEvent(
-            tag, title.ifBlank { "—" }, detail
+    /** 当前轮次：每来一条用户消息开新一轮（账本按「第 N 轮」分组用） */
+    private var curRound = 0
+
+    /** 往时间线追加一个事件（上限 200 条，防止长会话无限增长）。
+     *  v13：记录类型用 EventKind，一轮 = 一条用户消息触发的 用户 + 请求#N + 工具/子工具。 */
+    private fun pushEvent(kind: EventKind, title: String, detail: String, cost: String = "") {
+        if (kind == EventKind.User) curRound++
+        val inRound = kind != EventKind.Compress && kind != EventKind.Approval
+        _events.value = (_events.value + TrajectoryEvent(
+            kind = kind,
+            title = title.ifBlank { "—" },
+            detail = detail,
+            cost = cost,
+            round = if (inRound) curRound else 0,
+            reqIndex = if (kind == EventKind.Request) curRound else 0,
         )).takeLast(200)
     }
 

@@ -570,11 +570,40 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** S4 侧栏拉会话列表（来自 ACP session/list） */
+    /**
+     * v30.25：从侧栏点击会话 → 恢复该会话并切到对话页。
+     * 恢复后清空本地消息/工具/用量（ACP 不回放历史），让 S5 以干净态进入该会话；
+     * workspace 设为该会话的 cwd，输入区恢复可用。
+     */
+    fun openSession(session: Session) {
+        viewModelScope.launch {
+            _busy.value = true
+            val ok = client.resumeSession(session.id)
+            _busy.value = false
+            if (ok != null) {
+                _workspace.value = session.cwd.ifEmpty { null }
+                _messages.value = emptyList()
+                _tools.value = emptyList()
+                _contextUsage.value = null
+                lastReportedUsed = 0L
+                _tokensUsed.value = 0L
+                _tokensWindow.value = 0L
+                _usageSamples.value = 0
+                parseConfigOptions()
+            } else {
+                _error.value = "恢复会话失败（引擎无响应）"
+            }
+        }
+    }
+
+    /**
+     * S4 侧栏拉会话列表（来自 ACP session/list）。
+     * v30.25 修正：抽屉是**全局会话列表**，必须列出全部会话，不能按当前工作区(_workspace)过滤——
+     * 否则 openSession 把 _workspace 设成某会话的 cwd 后，刷新只列该工作区的会话，抽屉直接变空。
+     */
     fun refreshSessions() {
         viewModelScope.launch {
-            val cwd = _workspace.value
-            val arr = client.listSessions(cwd)
+            val arr = client.listSessions(null)
             if (arr == null) {
                 _sessions.value = emptyList()
                 _sessionsLoaded.value = false
