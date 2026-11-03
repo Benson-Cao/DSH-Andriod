@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -25,6 +26,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -104,6 +106,27 @@ fun DshChip(
     }
 }
 
+// ============================ Card ============================
+
+/** 统一卡片容器：设计稿 .card 的 r16 + 1px 描边 + 内距 11/12。 */
+@Composable
+fun DshCard(
+    modifier: Modifier = Modifier,
+    padding: PaddingValues = PaddingValues(horizontal = 12.dp, vertical = 11.dp),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val c = DshTheme.colors
+    Column(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(c.card)
+            .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+            .padding(padding),
+        content = content,
+    )
+}
+
 // ============================ Button ============================
 
 enum class BtnTone { Primary, Ghost, Danger }
@@ -125,6 +148,10 @@ fun DshBtn(
     tone: BtnTone = BtnTone.Primary,
     small: Boolean = false,
     enabled: Boolean = true,
+    /** 设计稿里有 h40 一档（如 S43「添加档位映射」）；默认 null 走 46 / 32 两档 */
+    height: Dp? = null,
+    /** 覆盖文字/图标色（S48「删除所选」= ghost 底 + danger 字） */
+    contentColor: Color? = null,
     onClick: () -> Unit,
 ) {
     val c = DshTheme.colors
@@ -136,7 +163,7 @@ fun DshBtn(
         tone == BtnTone.Primary -> if (pressed) c.brand2 else c.brand
         else -> if (pressed) c.line2 else c.card
     }
-    val fg = when {
+    val fg = contentColor ?: when {
         !enabled -> c.ink3
         tone == BtnTone.Primary -> Color.White
         tone == BtnTone.Danger -> c.danger
@@ -150,7 +177,7 @@ fun DshBtn(
 
     Row(
         modifier = modifier
-            .height(if (small) Metrics.BTN_SM_H else Metrics.BTN_H)
+            .height(height ?: if (small) Metrics.BTN_SM_H else Metrics.BTN_H)
             .then(
                 if (stroke != null)
                     Modifier.border(stroke, RoundedCornerShape(Radius.lg))
@@ -197,17 +224,20 @@ fun DshIBtn(
     bg: Color? = null,
     size: Dp = Metrics.IBTN,
     enabled: Boolean = true,
+    /** 触摸区外扩量；v30.23 首页工具行三钮并排时用 5dp 换取 10dp 视觉间距 */
+    touchSlop: Dp = Metrics.IBTN_TOUCH_SLOP,
     onClick: () -> Unit,
 ) {
     val c = DshTheme.colors
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val shape = RoundedCornerShape(9.dp)
+    // v22 修订版：`.ibtn` r9 → r8
+    val shape = RoundedCornerShape(8.dp)
 
     Box(
         modifier = modifier
-            // 触摸区外扩 4：撑满父级给的约束，不改变视觉
-            .sizeIn(minWidth = size + Metrics.IBTN_TOUCH_SLOP * 2, minHeight = size + Metrics.IBTN_TOUCH_SLOP * 2)
+            // 触摸区外扩：撑满父级给的约束，不改变视觉
+            .sizeIn(minWidth = size + touchSlop * 2, minHeight = size + touchSlop * 2)
             .clickable(enabled = enabled, interactionSource = interaction, indication = null) { onClick() },
         contentAlignment = Alignment.Center,
     ) {
@@ -242,12 +272,15 @@ fun DshMRow(
     iconTone: ChipTone? = null,
     trailing: (@Composable () -> Unit)? = null,
     chevron: Boolean = false,
+    /** v22 修订版：权限档位 Sheet 的当前档位需要软底高亮（设计稿 `.mrow{background:var(--soft)}`）。 */
+    selected: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val c = DshTheme.colors
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (selected) Modifier.background(c.soft, RoundedCornerShape(Radius.md)) else Modifier)
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -333,12 +366,14 @@ fun DshSwitch(
 
 // ============================ 分段控件 ============================
 
-/** 设计稿 .seg：底 line2，内项选中时 card + 阴影，r8 */
+/** 设计稿 .seg：底 line2，内项选中时 card + 阴影，r8。
+ *  tall=true 用更大内距（模型 Sheet 的 Off/High/Max  reasoning 档位，触控目标更大）。 */
 @Composable
 fun DshSeg(
     options: List<String>,
     selectedIndex: Int,
     modifier: Modifier = Modifier,
+    tall: Boolean = false,
     onSelect: (Int) -> Unit,
 ) {
     val c = DshTheme.colors
@@ -358,7 +393,10 @@ fun DshSeg(
                         RoundedCornerShape(Radius.sm),
                     )
                     .clickable { onSelect(i) }
-                    .padding(vertical = 7.dp, horizontal = 4.dp),
+                    .padding(
+                        vertical = if (tall) 10.dp else 7.dp,
+                        horizontal = if (tall) 6.dp else 4.dp,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -489,14 +527,20 @@ fun DshCode(
 // ============================ 品牌标 ============================
 
 /**
- * 设计稿 .brandmark：22×22 r7 渐变方块 + "deepseek" + HARNESS 描边小标。
+ * 设计稿 .brandmark：**26px 手绘 SVG logo** + "Deepseek" + "Harness" 描边小标。
  * 这是 App 的品牌锚点，S3/S4/S18 顶栏都在用。
+ *
+ * ⚠️ v22 修订版（2026-10-24）变更：
+ * - logo 本体从「渐变圆角方块 + material-icons bolt」换成 [DshLogo] 的手绘 SVG
+ *   （一只带尾鳍和眼睛的蓝色鲸形，详见 [DshLogo] 文档里的设计稿原文）；
+ * - 文字大小写 `deepseek` / `HARNESS` → `Deepseek` / `Harness`；
+ * - 容器 22dp → 26dp，且**不再是渐变底**（透明容器，svg 占满）。
  */
 @Composable
 fun DshBrandmark(
     modifier: Modifier = Modifier,
-    name: String = "deepseek",
-    tag: String = "HARNESS",
+    name: String = "Deepseek",
+    tag: String = "Harness",
 ) {
     val c = DshTheme.colors
     Row(
@@ -504,17 +548,8 @@ fun DshBrandmark(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        Box(
-            Modifier
-                .size(22.dp)
-                .background(
-                    Brush.linearGradient(listOf(c.brand, c.purple)),
-                    RoundedCornerShape(7.dp),
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(DshIcons.Bolt, null, Modifier.size(13.dp), tint = Color.White)
-        }
+        // v22 修订版：26dp 透明容器 + 手绘 SVG（不再是渐变方块 + bolt 图标）
+        DshLogo(modifier = Modifier.size(26.dp))
         Text(name, style = Type.brandmark, color = c.ink)
         if (tag.isNotEmpty()) {
             Box(
@@ -601,4 +636,135 @@ fun DshPick(
             }
         }
     }
+}
+
+// ============================ 表单字段（v20 S30–S49 共用）============================
+
+/**
+ * 设计稿 .flb：字段组标签。11/600，ink3，字距 .3，右下间距 5。
+ * 右侧可挂补充（如「不可修改」chip）。
+ */
+@Composable
+fun DshFieldLabel(
+    text: String,
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val c = DshTheme.colors
+    Row(
+        modifier.padding(bottom = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        Text(
+            text,
+            style = Type.meta.copy(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.3.sp,
+            ),
+            color = c.ink3,
+        )
+        if (trailing != null) trailing()
+    }
+}
+
+/**
+ * 设计稿 .fgrp：字段组（标签 + 控件），组间距 12。
+ * ⚠️ 尾 lambda 落在最后一个参数上：调用方 `DshFieldGroup(label = "x") { ... }`。
+ */
+@Composable
+fun DshFieldGroup(
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    labelTrailing: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(modifier.padding(bottom = 12.dp)) {
+        if (label != null) DshFieldLabel(label, trailing = labelTrailing)
+        content()
+    }
+}
+
+/**
+ * 设计稿 .fin：只读展示字段行。h40，1px --line，--card 底，r10，内距 11，gap 7。
+ * 整行可点（用于「跳去选择」类字段，如 S49 工作目录 → S41）。
+ *
+ * [autoHeight] = true 时改为 minHeight 40 + 顶部对齐（设计稿 S39 的 API 地址
+ * 用了 height:auto 让长 URL 换行显示）。
+ *
+ * ⚠️ content 必须是最后一个参数（尾 lambda 绑定），trailing 放它前面。
+ */
+@Composable
+fun DshFinRow(
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    autoHeight: Boolean = false,
+    leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val c = DshTheme.colors
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (autoHeight) Modifier.heightIn(min = 40.dp)
+                else Modifier.height(40.dp)
+            )
+            .clip(RoundedCornerShape(Radius.md))
+            .background(c.card)
+            .border(1.dp, c.line, RoundedCornerShape(Radius.md))
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 11.dp, vertical = if (autoHeight) 9.dp else 0.dp),
+        verticalAlignment = if (autoHeight) Alignment.Top else Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        if (leading != null) leading()
+        content()
+        if (trailing != null) trailing()
+    }
+}
+
+/**
+ * 设计稿 .pg：进度条（S35 按模型占比、S46 打包进度）。
+ * h6，底 line2，填充色由调用方给（品牌 / 紫）。
+ */
+@Composable
+fun DshProgressBar(
+    fraction: Float,
+    modifier: Modifier = Modifier,
+    color: Color = DshTheme.colors.brand,
+) {
+    val c = DshTheme.colors
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(6.dp)
+            .clip(RoundedCornerShape(3.dp))
+            .background(c.line2),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(3.dp))
+                .background(color),
+        )
+    }
+}
+
+/**
+ * 设计稿 .rt：行右侧数值/动作小字（S35 金额、S41 会话数、S48「恢复 ›」）。
+ */
+@Composable
+fun DshRowTail(text: String, modifier: Modifier = Modifier, color: Color? = null) {
+    val c = DshTheme.colors
+    Text(
+        text,
+        style = Type.meta.copy(fontWeight = FontWeight.SemiBold),
+        color = color ?: c.ink3,
+        modifier = modifier,
+        maxLines = 1,
+    )
 }

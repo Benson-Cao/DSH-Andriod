@@ -419,6 +419,12 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
             _error.value = "先选择工作区"
             return
         }
+        if (_busy.value) {
+            // 引擎对并发 prompt 会回 Invalid params（"a prompt is already in flight"），
+            // 与其让用户看到干巴巴的报错，不如在 App 侧如实拦下（v30.30）
+            _error.value = "当前有任务进行中，请先停止再发送"
+            return
+        }
         _messages.value = _messages.value + ChatMessage(
             id = "u-${System.nanoTime()}", role = Role.User, text = clean,
         )
@@ -576,6 +582,12 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
      * workspace 设为该会话的 cwd，输入区恢复可用。
      */
     fun openSession(session: Session) {
+        // 同一会话重复恢复会被引擎拒（"session is already active" → Invalid params）；
+        // 且恢复成功才清消息，重复点击原地复用即可，不清空、不闪空列表（v30.30）
+        if (session.id == client.currentSessionId()) {
+            if (_workspace.value == null) _workspace.value = session.cwd.ifEmpty { null }
+            return
+        }
         viewModelScope.launch {
             _busy.value = true
             val ok = client.resumeSession(session.id)
@@ -590,8 +602,8 @@ class DshViewModel(app: Application) : AndroidViewModel(app) {
                 _tokensWindow.value = 0L
                 _usageSamples.value = 0
                 parseConfigOptions()
-            } else {
-                _error.value = "恢复会话失败（引擎无响应）"
+            } else if (_error.value == null) {
+                _error.value = "恢复会话失败（详见错误卡）"
             }
         }
     }

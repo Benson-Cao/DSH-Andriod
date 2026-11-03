@@ -7,38 +7,45 @@ import java.io.File
 /**
  * dsh-market 市场本体的探测。
  *
- * ## 事实（本机 2026-10-18 实测）
- * `ls $HOME/node_modules/@deepseek-ai/` 共 200+ 个包，**没有 dshmarket** ——
- * 也就是说设计稿 S21 说的"需先 `dsh plugin --profile web add dshmarket`
- * 把市场本身装进去"，在这台设备上确实还没发生。
+ * ## 事实（2026-10-19 修正）
+ * `dsh plugin add` 只是 pnpm 转发器：在 `.dsh/profiles/<name>/` 下跑
+ * `pnpm add <pkg>`，包落在**该 profile 目录的 node_modules**里
+ * （无 scope，包名就是 `dshmarket`，npm 上 1.66.42 真实存在）。
+ * 此前探测 `node_modules/@deepseek-ai/dshmarket` 是错的 ——
+ * 那是 dsh 自带的 scope 包位置，市场本体从来不在那里。
  *
- * 所以市场三屏（S21/S22/S23）在未安装前**没有真实数据源**。
- * 与其拿设计稿里的示意插件名（dsh-web-ui-all 4.2k 星之类）冒充真实条目，
- * 不如如实呈现"未安装"并给出安装命令 —— 这也是设计稿自己的规则。
+ * 注意：dshmarket 是 dsh **web UI** 的市场面板（`client.platform: "web"`），
+ * App 的 Compose 复刻市场不依赖它，数据源是 npm 上的 dsh-plugin-catalog 包
+ * （见 DshMarketCatalog）。所以这里探测不到只影响"已安装"chip 的真假，
+ * 不影响市场列表能不能看。
  *
- * 探测方式刻意保持最简单：只看包目录在不在。
- * 不去执行 `dsh plugin list`（那是 CLI 且要另起进程），
- * 也不猜索引源格式 —— 索引源本身还没有内容可解析。
+ * 探测方式保持最简单：只看 profile 目录下的包目录在不在。
  */
 object DshMarketProbe {
 
     private const val TAG = "DshMarketProbe"
 
-    /** 市场本体包名。dsh 的第三方插件统一装在 $HOME/node_modules 下。 */
+    /** 市场本体包名（npm 上无 scope）。 */
     private const val MARKET_PKG = "dshmarket"
 
-    /** 本机实测市场包目录名（若将来装上，靠它兜底匹配） */
+    /** 兜底匹配（若将来包名变更） */
     private val CANDIDATES = listOf("dshmarket", "dsh-market", "dsh-plugin-dshmarket")
 
     fun isInstalled(ctx: Context): Boolean = probe(ctx) != null
 
-    /** 返回命中的包名；未安装为 null */
+    /** 返回命中的 "<profile>/<包名>"；未安装为 null */
     fun probe(ctx: Context): String? = try {
-        val nm = File(DshBootstrapAccess.homeDir(ctx), "node_modules/@deepseek-ai")
-        val hit = if (nm.isDirectory) {
-            nm.list()?.firstOrNull { dir -> CANDIDATES.any { dir == it || dir.contains(it, ignoreCase = true) } }
+        val profiles = File(DshBootstrapAccess.homeDir(ctx), ".dsh/profiles")
+        val hit = if (profiles.isDirectory) {
+            profiles.listFiles()?.sortedBy { it.name }?.firstNotNullOfOrNull { dir ->
+                val nm = File(dir, "node_modules")
+                if (nm.isDirectory) {
+                    nm.list()?.firstOrNull { d -> CANDIDATES.any { d == it || d.contains(it, ignoreCase = true) } }
+                        ?.let { "${dir.name}/$it" }
+                } else null
+            }
         } else null
-        Log.i(TAG, "市场本体探测：${hit ?: "未安装"}（扫 ${nm.absolutePath}）")
+        Log.i(TAG, "市场本体探测：${hit ?: "未安装"}（扫 ${profiles.absolutePath}/*/node_modules）")
         hit
     } catch (t: Throwable) {
         // 探测本身失败不等于"未安装"，但也不能让 UI 崩；当作未装并留日志

@@ -155,6 +155,8 @@ final class DshPalette {
 
     /** 页面底色。 */
     static int bg(Context c) { return isDark(c) ? D_BG : L_BG; }
+    /** 卡片/骨架块填充色：页面底色之上的一层（浅色=白，深色=比底色亮一档）。 */
+    static int surface(Context c) { return isDark(c) ? 0xFF1C2632 : 0xFFFFFFFF; }
     /** 主文字色。 */
     static int text(Context c) { return isDark(c) ? D_TEXT : L_TEXT; }
     /** 弱化文字色。 */

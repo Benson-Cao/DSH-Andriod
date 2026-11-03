@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="dsh_icon_background">#4C9FD8</color>
+    <!-- r163 方案 C：系统启动画面/首帧底色（对齐 DshPalette.L_BG #F7F9FC）。
+         目的：点击图标 → 系统画 windowBackground → Activity 首帧 → 品牌启动页，
+         全程同色，消灭"白屏一闪"。 -->
+    <color name="dsh_boot_bg">#F7F9FC</color>
 </resources>

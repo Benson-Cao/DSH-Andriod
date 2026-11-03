@@ -38,16 +38,20 @@
         </intent>
     </shortcut>
 
+    <!-- v31：设置快捷方式改指 Compose 原生设置页（mobile.SettingsActivity）。
+         原指向 com.dsh.harness.app.activities.SettingsActivity —— fork 重命名包后
+         该类实际在 com.termux.app.activities 下，此快捷方式一直是坏的。 -->
     <shortcut
         android:shortcutId="settings"
         android:enabled="true"
         android:icon="@drawable/ic_settings"
-        android:shortcutShortLabel="@string/action_open_settings"
+        android:shortcutShortLabel="@string/shortcut_app_settings_short"
+        android:shortcutLongLabel="@string/shortcut_app_settings_long"
         tools:targetApi="n_mr1">
         <intent
-            android:action="android.intent.action.VIEW"
+            android:action="com.dsh.harness.action.OPEN_APP_SETTINGS"
             android:targetPackage="com.dsh.harness"
-            android:targetClass="com.dsh.harness.app.activities.SettingsActivity"
+            android:targetClass="com.dsh.harness.mobile.SettingsActivity"
             android:name="android.shortcut.conversation"/>
     </shortcut>
 

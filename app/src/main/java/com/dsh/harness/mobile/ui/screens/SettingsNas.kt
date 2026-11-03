@@ -279,7 +279,7 @@ fun S14Settings(
 
             Spacer(Modifier.height(18.dp))
             Text(
-                "DeepSeek Harness · v0.2.1-alpha.4\n网页版与桌面端同源",
+                "DeepSeek Harness · v0.2.2-alpha.1\n网页版与桌面端同源",
                 style = Type.meta.copy(lineHeight = 17.sp),
                 color = c.ink3,
                 modifier = Modifier.fillMaxWidth(),

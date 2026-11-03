@@ -21,7 +21,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC_ROOT="${DSH_SRC_ROOT:-$REPO_ROOT/android-java}"
-BUILD_TREE="${DSH_BUILD_TREE:-$REPO_ROOT/..}"
+BUILD_TREE="${DSH_BUILD_TREE:-D:/work/termux-app}"
 
 SRC_JAVA="$SRC_ROOT/com/dsh/harness"
 DST_JAVA="$BUILD_TREE/app/src/main/java/com/dsh/harness"

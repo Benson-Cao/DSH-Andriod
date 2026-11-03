@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- r163 方案 C：API 23+ 才有 windowLightStatusBar。
+         浅色底 → 状态栏深色图标；深色 night 变体不覆盖此项（默认白图标正合适）。 -->
+    <style name="Theme.DshSplash" parent="@style/Theme.DshSplash">
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

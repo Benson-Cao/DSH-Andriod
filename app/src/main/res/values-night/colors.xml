@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- r163 方案 C：深色下的启动底色（对齐 DshPalette.D_BG #141B23）。 -->
+    <color name="dsh_boot_bg">#141B23</color>
+</resources>

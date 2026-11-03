@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dsh.harness.mobile.data.DshAcpClient
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
 
@@ -133,7 +134,7 @@ fun DshSpinner(modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp 
     }
 }
 
-/** 工具调用行：状态图标 + mono 工具名 + 参数 + 耗时 */
+/** 工具调用行：状态图标 + 记录类型标签 + mono 工具名 + 参数 + 耗时 + 查看 */
 @Composable
 fun DshToolRow(
     tool: String,
@@ -141,6 +142,10 @@ fun DshToolRow(
     status: ToolStatus,
     cost: String,
     modifier: Modifier = Modifier,
+    /** 记录类型标签：工具 / 子工具（v13） */
+    kindLabel: String? = null,
+    /** 点击「查看」跳轨迹并定位该记录（v13） */
+    onView: (() -> Unit)? = null,
 ) {
     val c = DshTheme.colors
     val active = status == ToolStatus.Running
@@ -163,6 +168,9 @@ fun DshToolRow(
             ToolStatus.Fail -> Icon(DshIcons.ErrorOutline, null, Modifier.size(15.dp), tint = c.danger)
             ToolStatus.Wait -> Icon(DshIcons.Lock, null, Modifier.size(15.dp), tint = c.warn)
         }
+        if (kindLabel != null) {
+            DshChip(kindLabel, tone = if (kindLabel == "子工具") ChipTone.Purple else ChipTone.Ok, mini = true)
+        }
         Text(
             tool,
             style = Type.mono,
@@ -177,24 +185,36 @@ fun DshToolRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        Text(
-            cost,
-            style = Type.meta.copy(fontSize = 10.5.sp),
-            color = c.ink3,
-            fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.Normal else androidx.compose.ui.text.font.FontWeight.SemiBold,
-        )
+        if (cost.isNotEmpty()) {
+            Text(
+                cost,
+                style = Type.meta.copy(fontSize = 10.5.sp),
+                color = c.ink3,
+                fontWeight = if (active) androidx.compose.ui.text.font.FontWeight.Normal else androidx.compose.ui.text.font.FontWeight.SemiBold,
+            )
+        }
+        if (onView != null) {
+            Text(
+                "查看",
+                style = Type.meta.copy(fontSize = 10.5.sp),
+                color = c.brand,
+                modifier = Modifier.clickable { onView() },
+            )
+        }
     }
 }
 
 enum class ToolStatus { Done, Running, Fail, Wait }
 
-/** 思考折叠块 .fold：标题行可点，展开后缩进显示正文 */
+/** 思考折叠块 .fold：标题行可点，展开后缩进显示正文。
+ * [trailing] 挂标题行右侧的弱化补充（设计稿 S42「判断为 UI 侧插件」）。 */
 @Composable
 fun DshFold(
     title: String,
     detail: String,
     modifier: Modifier = Modifier,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    trailing: (@Composable () -> Unit)? = null,
     initiallyOpen: Boolean = false,
 ) {
     val c = DshTheme.colors
@@ -221,6 +241,10 @@ fun DshFold(
                 Icon(icon, null, Modifier.size(14.dp), tint = c.ink3.copy(alpha = 0.8f))
             }
             Text(title, style = Type.sec, color = c.ink3, maxLines = 1)
+            if (trailing != null) {
+                Spacer(Modifier.weight(1f))
+                trailing()
+            }
         }
         if (open) {
             Text(
@@ -253,24 +277,41 @@ fun S5ChatRunning(
     /** 来自 ACP 的实时消息流；为空时退回设计稿演示数据 */
     liveMessages: List<com.dsh.harness.mobile.data.DshViewModel.ChatMessage> = emptyList(),
     liveTools: List<com.dsh.harness.mobile.data.DshViewModel.ToolCall> = emptyList(),
-    showApproval: Boolean = false,
+    /** v13 轨迹账本：对话/轨迹标签的「轨迹」态复用 */
+    events: List<TrajectoryEvent> = emptyList(),
     /** 返回上一级（由 App 层的 NavState 决定从哪来回哪去） */
     onBack: () -> Unit,
     /** 是否有进行中的提示词（决定"停止"是否出现） */
     running: Boolean = false,
+    /** v30.30：引擎是否已连接（决定空态走诚实提示还是设计稿演示数据） */
+    connected: Boolean = false,
     /** 上下文占用百分比，来自 ACP usage_update；null 表示协议还没报 */
     contextUsage: Int? = null,
     /** 中断当前提示词（ACP: session/cancel） */
     onCancel: () -> Unit = {},
     onOpenMore: () -> Unit,
-    onOpenApproval: () -> Unit,
     onOpenTrajectory: () -> Unit,
     onSend: (String) -> Unit,
+    /** v30.8：本轮已结束且有回答 → 跳 S6 成果页（此前 S6 是孤儿路由，无任何入口） */
+    onOpenResult: () -> Unit = {},
+    /**
+     * v22 修订版：引擎错误信息（VM.error，来自 ACP 的 error / 启动失败 / 发送失败）。
+     * 非 null 时在消息流末尾渲染「模型调用失败」卡。
+     */
+    errorText: String? = null,
+    /** v22 修订版：错误卡「重试」——重新发送上一条用户消息 */
+    onRetry: () -> Unit = {},
+    /** v22 修订版：错误卡「切换模型」→ S30 默认模型与思考强度 */
+    onSwitchModel: () -> Unit = {},
 ) {
     val c = DshTheme.colors
     var input by remember { mutableStateOf("") }
     val listState = rememberScrollState()
     val hasLive = liveMessages.isNotEmpty()
+    // v30.8：是否已有可展示的最终回答 → 决定「查看成果」入口是否出现
+    val hasAnswer = liveMessages.any { it.role == com.dsh.harness.mobile.data.DshViewModel.Role.Assistant }
+    // v13：顶部「对话 / 轨迹」并列标签
+    var tab by remember { mutableStateOf(0) }
 
     DshScreen(modifier) {
         // —— 会话头：标题 + 状态点 + 模式·权限 + 更多 ——
@@ -292,86 +333,169 @@ fun S5ChatRunning(
             },
         )
 
+        // —— v13 顶部「对话 / 轨迹」并列标签（默认对话）——
+        Column(Modifier.padding(horizontal = Space.lg).padding(top = 10.dp)) {
+            DshTabs(listOf("对话", "轨迹"), tab) { tab = it }
+        }
+
         // —— 消息区 ——
         Column(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .verticalScroll(listState)
-                .padding(horizontal = Space.lg),
+                .padding(horizontal = Space.lg)
+                .padding(top = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Spacer(Modifier.height(4.dp))
+            when (tab) {
+                // —— 对话态：消息 + 工具调用组 ——
+                0 -> {
+                    Spacer(Modifier.height(4.dp))
 
-            // 有真实会话时渲染 ACP 推来的消息，否则退回设计稿演示数据
-            if (hasLive) {
-                liveMessages.forEach { m ->
-                    when (m.role) {
-                        com.dsh.harness.mobile.data.DshViewModel.Role.User ->
-                            DshUserBubble(m.text)
+                    // 有真实会话时渲染 ACP 推来的消息；未连接时退回设计稿演示数据。
+                    // v30.30：已连接但还没有消息 → 诚实空态，不再渲染演示对话——
+                    // 真机实锉：演示分支的假思考/假回答被当成"回复内容不对"报上来。
+                    if (hasLive) {
+                        liveMessages.forEach { m ->
+                            when (m.role) {
+                                com.dsh.harness.mobile.data.DshViewModel.Role.User ->
+                                    DshUserBubble(m.text)
 
-                        com.dsh.harness.mobile.data.DshViewModel.Role.Thought ->
-                            DshFold(
-                                title = "已思考",
-                                detail = m.text,
-                                icon = DshIcons.Psychology,
-                                initiallyOpen = false,
+                                com.dsh.harness.mobile.data.DshViewModel.Role.Thought ->
+                                    DshFold(
+                                        title = "已思考",
+                                        detail = m.text,
+                                        icon = DshIcons.Psychology,
+                                        initiallyOpen = false,
+                                    )
+
+                                com.dsh.harness.mobile.data.DshViewModel.Role.Assistant ->
+                                    DshAnswerText(m.text)
+                            }
+                        }
+                    } else if (connected) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(top = 48.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text("会话已就绪", style = Type.secTitle, color = c.ink)
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "引擎已连接；本页不回放历史消息（ACP 限制）。\n在首页输入即可继续本会话对话。",
+                                style = Type.meta.copy(lineHeight = 17.6.sp),
+                                color = c.ink3,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             )
+                        }
+                    } else {
+                        // 演示分支只在引擎未连接时出现；空文本不渲染空气泡（真机见过）
+                        if (userText.isNotBlank()) DshUserBubble(userText)
 
-                        com.dsh.harness.mobile.data.DshViewModel.Role.Assistant ->
-                            DshAnswerText(m.text)
+                        DshFold(
+                            title = "已思考 · 2.4s",
+                            detail = "表头有 8 行数据落在版心外，先确认列口径再套模板。" +
+                                "同比需要去年同期列，文件里没有，走 web_search 补一份公开口径并标注来源。",
+                            icon = DshIcons.Psychology,
+                        )
+
+                        DshAnswerText("好的，我按部门维度汇总，先读表结构再生成幻灯片。")
                     }
-                }
-            } else {
-                DshUserBubble(userText)
 
-                DshFold(
-                    title = "已思考 · 2.4s",
-                    detail = "表头有 8 行数据落在版心外，先确认列口径再套模板。" +
-                        "同比需要去年同期列，文件里没有，走 web_search 补一份公开口径并标注来源。",
-                    icon = DshIcons.Psychology,
-                )
+                    // —— 工具调用组（有实时数据就渲染实时，否则演示）——
+                    if (liveTools.isNotEmpty()) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(Radius.xl))
+                                .background(c.card)
+                                .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                        ) {
+                            Text(
+                                "工具调用 · ${liveTools.size}",
+                                style = Type.chip.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                                color = c.ink,
+                                modifier = Modifier.padding(bottom = 6.dp),
+                            )
+                            liveTools.forEach { t ->
+                                DshToolRow(
+                                    tool = t.name,
+                                    arg = t.detail,
+                                    status = when (t.status) {
+                                        com.dsh.harness.mobile.data.DshViewModel.Status.Running -> ToolStatus.Running
+                                        com.dsh.harness.mobile.data.DshViewModel.Status.Done -> ToolStatus.Done
+                                        com.dsh.harness.mobile.data.DshViewModel.Status.Fail -> ToolStatus.Fail
+                                        com.dsh.harness.mobile.data.DshViewModel.Status.Wait -> ToolStatus.Wait
+                                    },
+                                    cost = t.cost,
+                                    kindLabel = if (t.name.contains("subagent", ignoreCase = true)) "子工具" else "工具",
+                                    onView = onOpenTrajectory,
+                                )
+                            }
+                        }
+                    }
 
-                DshAnswerText("好的，我按部门维度汇总，先读表结构再生成幻灯片。")
-            }
+                    // ⚠️ 子代理与后台任务：ACP **没有**对应事件类型
+                    //（协议表里只有 user/agent message、thought、tool_call、usage、config）。
+                    // 所以这两块不再展示设计稿演示数据，等接上能力再开。
 
-            // —— 工具调用组（有实时数据就渲染实时，否则演示）——
-            if (liveTools.isNotEmpty()) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.card)
-                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                ) {
-                    Text(
-                        "工具调用 · ${liveTools.size}",
-                        style = Type.chip.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
-                        color = c.ink,
-                        modifier = Modifier.padding(bottom = 6.dp),
-                    )
-                    liveTools.forEach { t ->
-                        DshToolRow(
-                            tool = t.name,
-                            arg = t.detail,
-                            status = when (t.status) {
-                                com.dsh.harness.mobile.data.DshViewModel.Status.Running -> ToolStatus.Running
-                                com.dsh.harness.mobile.data.DshViewModel.Status.Done -> ToolStatus.Done
-                                com.dsh.harness.mobile.data.DshViewModel.Status.Fail -> ToolStatus.Fail
-                                com.dsh.harness.mobile.data.DshViewModel.Status.Wait -> ToolStatus.Wait
-                            },
-                            cost = t.cost,
+                    // —— v22 修订版：模型调用失败卡 ——
+                    // 设计稿原文：danger 边框 + 6% danger 底，标题行（error 图标 / 红字 /
+                    // 右侧「N 次重试后」）+ 错误详情 + 「重试」「切换模型」两个 30px 小按钮。
+                    // ⚠️ 详情文案取 VM.error 的**真实文本**（429 / 无 API key / 连接失败…），
+                    // 不写死设计稿那句"429 Too Many Requests"——那只是一种情况。
+                    if (errorText != null) {
+                        S5ErrorCard(
+                            detail = errorText,
+                            onRetry = onRetry,
+                            onSwitchModel = onSwitchModel,
+                        )
+                        Spacer(Modifier.height(9.dp))
+                    }
+
+                    // —— v30.8：本轮结束后给出「查看成果」入口（→ S6 成果页）——
+                    if (!running && hasAnswer) {
+                        DshBtn(
+                            "查看成果",
+                            icon = DshIcons.Slideshow,
+                            small = true,
+                            tone = BtnTone.Primary,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = onOpenResult,
                         )
                     }
+
+                    Spacer(Modifier.height(4.dp))
+                }
+
+                // —— 轨迹态：预览账本 + 打开轨迹 ——
+                else -> {
+                    Spacer(Modifier.height(28.dp))
+                    Text(
+                        "轨迹视图按「第 N 轮」展开账本与时间概览。",
+                        style = Type.sec.copy(lineHeight = 19.sp), color = c.ink3,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    DshBtn(
+                        "打开轨迹",
+                        small = true,
+                        tone = BtnTone.Ghost,
+                        onClick = onOpenTrajectory,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "看不到「轨迹」标签时：设置 → 通用设置 → 打开「显示代码工作视图」。引导里选「办公与创作」或跳过引导的用户，默认不带这个标签。",
+                        style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp), color = c.ink3,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.md))
+                            .background(c.soft)
+                            .padding(10.dp),
+                    )
                 }
             }
-
-            // ⚠️ 子代理与后台任务：ACP **没有**对应事件类型
-            //（协议表里只有 user/agent message、thought、tool_call、usage、config）。
-            // 所以这两块不再展示设计稿演示数据，等接上能力再开。
-
-            Spacer(Modifier.height(4.dp))
         }
 
         // —— 介入条：停止 / 排队 / 中途引导 + 上下文占用（吸底第一层）——
@@ -401,6 +525,9 @@ fun S5ChatRunning(
         }
 
         // —— 输入条（吸底第二层）——
+        // 设计稿里它是静态展示（无点击）；真实可输入的框在首页 S3。
+        // v25 实测反馈：原来点它弹 S7 演示审批 Sheet —— 用户想发消息却看到
+        // 「需要你的确认」，等于把输入区变成了审批入口。现在点它回首页输入。
         Column(Modifier.fillMaxWidth().padding(horizontal = Space.lg)) {
             Row(
                 Modifier
@@ -408,7 +535,7 @@ fun S5ChatRunning(
                     .clip(RoundedCornerShape(Radius.xl))
                     .background(c.card)
                     .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
-                    .clickable { onOpenApproval() }
+                    .clickable { onBack() }
                     .padding(horizontal = 10.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -510,21 +637,41 @@ fun BoxScope.S5MoreSheet(
 
 /**
  * S7 操作审批 —— 设计稿标 Sheet 高 62%。
- * 关键文案原则（设计稿原文）：切到 Read Only 时写入类操作一律询问；
- * Full Access 不再提示 —— 这段必须留在屏上，不能省。
+ *
+ * v25 起接**真实协议**（ACP `session/request_permission`）：
+ *   - permission 来自 DshAcpClient.pendingPermission，toolCallId 指向触发
+ *     这次审批的工具调用（session/update 的 tool_call 事件会先把它带过来）；
+ *   - 按钮**按 permission.options 渲染** —— 协议实证（dsh-acp
+ *     lib/index.js:1115-1137）只有 allow-once / reject-once 两个一次性选项，
+ *     **没有 allow_always**。设计稿的「本会话始终允许此类操作」在真实协议里
+ *     没有对应物，v24 及以前那个按钮点了只是关窗（骗人），已删除。
+ *   - 取消（拖走/返回）走 onCancel，协议层按 cancelled 应答 = 拒绝。
+ *
+ * 设计稿原文仍保留在脚注：切到 Read Only 时写入类操作一律询问；
+ * Full Access 不再提示 —— 这是权限档位的行为说明，必须留在屏上。
  */
 @Composable
 fun BoxScope.S7ApprovalSheet(
     visible: Boolean,
-    onDismiss: () -> Unit,
-    onAllowOnce: () -> Unit,
-    onAllowAlways: () -> Unit,
-    onReject: () -> Unit,
+    permission: DshAcpClient.PendingPermission,
+    /** 触发工具名（tool_call 事件的 title）；空串 = 协议还没推过来，走兜底文案 */
+    toolName: String,
+    /** 工具参数摘要（命令/路径，来自 rawInput）；空串 = 协议未提供 */
+    toolDetail: String,
+    onCancel: () -> Unit,
+    /** 选中某个协议选项，optionId 原样回传 */
+    onRespond: (String) -> Unit,
 ) {
     val c = DshTheme.colors
+    // 协议选项 → 设计稿按钮位：allow 类进主按钮，reject 类进幽灵按钮，
+    // 其余（协议真出现第三种时）按幽灵渲染并用协议原名，不猜语义。
+    val allowOpt = permission.options.firstOrNull { it.kind.contains("allow", true) }
+    val rejectOpt = permission.options.firstOrNull { it.kind.contains("reject", true) }
+    val restOpts = permission.options.filter { it != allowOpt && it != rejectOpt }
+
     DshSheet(
         visible = visible,
-        onDismiss = onDismiss,
+        onDismiss = onCancel,
         maxHeightRatio = 0.62f,
         header = {
             DshSheetHeader(
@@ -532,39 +679,36 @@ fun BoxScope.S7ApprovalSheet(
                 icon = DshIcons.Shield,
                 iconTint = c.warn,
                 trailing = {
-                    DshChip("Workspace Write", tone = ChipTone.Warn, mini = true)
+                    DshChip(
+                        text = toolName.ifEmpty { "权限确认" },
+                        tone = ChipTone.Warn,
+                        mini = true,
+                    )
                 },
             )
         },
         content = {
             Text(
-                "将要执行的命令",
+                if (toolName.isNotEmpty()) "$toolName 请求执行操作" else "本地引擎请求执行操作",
                 style = Type.secTitle,
                 color = c.ink3,
                 modifier = Modifier.padding(bottom = 6.dp),
             )
-            DshCode(
-                "rm -rf ./dist\n&& npm run build\n&& python scripts/export_all.py --overwrite",
-            )
-
-            Text(
-                "影响范围",
-                style = Type.secTitle,
-                color = c.ink3,
-                modifier = Modifier.padding(top = 14.dp, bottom = 6.dp),
-            )
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Radius.xl))
-                    .background(c.card)
-                    .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-            ) {
-                ImpactRow(DshIcons.Check, "删除", "./dist", "工作区内", c.ok)
-                DshDivider()
-                ImpactRow(DshIcons.Check, "覆盖", "reports/*.csv", "3 个文件", c.ok)
-                DshDivider()
-                ImpactRow(DshIcons.Warning, "不可回滚", "", "未纳入 Git", c.danger, dangerText = true)
+            if (toolDetail.isNotEmpty()) {
+                DshCode(toolDetail)
+            } else {
+                // 诚实兜底：协议没给参数原文（tool_call 事件还没到）时不编造命令。
+                // v24 这里硬编码了一条 rm -rf 演示命令，真机上每次审批都显示它。
+                Text(
+                    "协议未提供命令原文（工具调用详情尚未同步，可拒绝后重试）",
+                    style = Type.meta,
+                    color = c.ink3,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(Radius.md))
+                        .background(c.line2)
+                        .padding(horizontal = 10.dp, vertical = 12.dp),
+                )
             }
 
             Text(
@@ -575,45 +719,157 @@ fun BoxScope.S7ApprovalSheet(
             )
         },
         footer = {
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                DshBtn("拒绝", tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = onReject)
-                DshBtn("本次允许", modifier = Modifier.weight(1.3f), onClick = onAllowOnce)
+            if (permission.options.isEmpty()) {
+                // 协议异常兜底：一个选项都没给时也要有出口，
+                // 否则用户被一张没有按钮的 Sheet 卡死，dsh 侧那轮也永远挂起。
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    DshBtn(
+                        "拒绝",
+                        tone = BtnTone.Ghost,
+                        modifier = Modifier.weight(1f),
+                        onClick = onCancel,
+                    )
+                    DshBtn(
+                        "本次允许",
+                        modifier = Modifier.weight(1.3f),
+                        onClick = { onRespond("allow-once") },
+                    )
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    rejectOpt?.let { opt ->
+                        DshBtn(
+                            approvalBtnLabel(opt),
+                            tone = BtnTone.Ghost,
+                            modifier = Modifier.weight(1f),
+                            onClick = { onRespond(opt.optionId) },
+                        )
+                    }
+                    allowOpt?.let { opt ->
+                        DshBtn(
+                            approvalBtnLabel(opt),
+                            modifier = Modifier.weight(1.3f),
+                            onClick = { onRespond(opt.optionId) },
+                        )
+                    }
+                }
+                restOpts.forEach { opt ->
+                    Spacer(Modifier.height(9.dp))
+                    DshBtn(
+                        approvalBtnLabel(opt),
+                        tone = BtnTone.Ghost,
+                        onClick = { onRespond(opt.optionId) },
+                    )
+                }
             }
-            Spacer(Modifier.height(9.dp))
-            DshBtn("本会话始终允许此类操作", tone = BtnTone.Ghost, onClick = onAllowAlways)
         },
     )
 }
 
+/** 协议 kind → 设计稿中文按钮名；未知 kind 用协议原 name，不翻译更不编造 */
+private fun approvalBtnLabel(o: DshAcpClient.PendingPermission.PermissionOption): String = when {
+    o.kind.contains("reject", true) -> "拒绝"
+    o.kind.contains("allow", true) -> "本次允许"
+    else -> o.name.ifEmpty { o.optionId }
+}
+
+/**
+ * v22 修订版：S5「模型调用失败」卡。
+ *
+ * 设计稿原文（`DeepSeekHarness手机端设计稿-v22.html`）：
+ * ```html
+ * <div class="card" style="padding:12px 13px;border-radius:14px;
+ *      border:1px solid rgba(229,72,72,.25);background:rgba(229,72,72,.06)">
+ *   <div class="row" style="margin-bottom:7px">
+ *     <i class="material-icons" style="font-size:16px;color:var(--danger)">error</i>
+ *     <span style="font-size:12.5px;font-weight:650;color:var(--danger)">模型调用失败</span>
+ *     <span style="flex:1"></span>
+ *     <span style="font-size:11px;color:var(--ink3)">2 次重试后</span>
+ *   </div>
+ *   <div style="font-size:11.5px;color:var(--ink2);line-height:1.6;margin-bottom:10px">
+ *     DeepSeek-V4-Flash 返回 429 Too Many Requests，API 密钥额度可能已用尽。</div>
+ *   <div style="display:flex;gap:7px">
+ *     <div class="btn sm" ...>重试</div>
+ *     <div class="btn sm ghost" data-goto="S30">切换模型</div>
+ *   </div>
+ * </div>
+ * ```
+ *
+ * 实现取舍：
+ * - 「2 次重试后」**不画** —— dsh 侧的重试次数没有通过 ACP 暴露给客户端，
+ *   写死一个数字就是假信息。右侧改放错误分类（见 [classifyErr]）。
+ * - 详情行用 [detail] 真实错误文本；为空时给一句兜底说明。
+ */
 @Composable
-private fun ImpactRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    verb: String,
-    path: String,
-    tail: String,
-    tint: Color,
-    dangerText: Boolean = false,
+private fun S5ErrorCard(
+    detail: String,
+    onRetry: () -> Unit,
+    onSwitchModel: () -> Unit,
 ) {
     val c = DshTheme.colors
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .clip(RoundedCornerShape(14.dp))
+            .background(c.danger.copy(alpha = 0.06f))
+            .border(1.dp, c.danger.copy(alpha = 0.25f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 13.dp, vertical = 12.dp),
     ) {
-        Icon(icon, null, Modifier.size(15.dp), tint = tint)
-        Text(verb, style = Type.chip, color = c.ink2)
-        if (path.isNotEmpty()) {
-            Text(path, style = Type.mono, color = c.ink2)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(DshIcons.Error, null, Modifier.size(16.dp), tint = c.danger)
+            Spacer(Modifier.width(7.dp))
+            Text(
+                "模型调用失败",
+                style = Type.meta.copy(fontSize = 12.5.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+                color = c.danger,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                classifyErr(detail),
+                style = Type.meta.copy(fontSize = 11.sp),
+                color = c.ink3,
+            )
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(7.dp))
         Text(
-            tail,
-            style = Type.chip,
-            color = if (dangerText) c.danger else c.ink3,
-            fontWeight = if (dangerText) androidx.compose.ui.text.font.FontWeight.SemiBold
-            else androidx.compose.ui.text.font.FontWeight.Normal,
+            detail.ifBlank { "引擎未返回具体错误信息，可重试或查看轨迹了解析到哪一步。" },
+            style = Type.meta.copy(fontSize = 11.5.sp, lineHeight = 18.4.sp),
+            color = c.ink2,
         )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            DshBtn(
+                "重试",
+                icon = DshIcons.Refresh,
+                small = true,
+                modifier = Modifier.weight(1f),
+                onClick = onRetry,
+            )
+            DshBtn(
+                "切换模型",
+                icon = DshIcons.Settings,
+                small = true,
+                tone = BtnTone.Ghost,
+                modifier = Modifier.weight(1f),
+                onClick = onSwitchModel,
+            )
+        }
+    }
+}
+
+/**
+ * 把真实错误文本归类成一句短标签（替代设计稿写死的「2 次重试后」）。
+ * dsh 不通过 ACP 上报重试次数，所以这里只做**文本特征分类**，不猜数字。
+ */
+private fun classifyErr(raw: String): String {
+    val t = raw.lowercase()
+    return when {
+        t.contains("429") || t.contains("rate limit") || t.contains("too many requests") -> "触发限流"
+        t.contains("no api key") || t.contains("api key") || t.contains("credentials") -> "密钥问题"
+        t.contains("timeout") || t.contains("timed out") -> "请求超时"
+        t.contains("refused") || t.contains("unreachable") || t.contains("connect") -> "连接失败"
+        t.contains("401") || t.contains("403") || t.contains("unauthorized") -> "鉴权失败"
+        t.contains("工作区") || t.contains("cwd") || t.contains("directory") -> "工作区问题"
+        else -> "引擎错误"
     }
 }

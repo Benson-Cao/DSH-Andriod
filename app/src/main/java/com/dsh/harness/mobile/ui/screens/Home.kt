@@ -680,7 +680,7 @@ fun BoxScope.S3WorkspaceSheet(
                     tint = c.ink3,
                 )
                 Text(
-                    "NAS 仅作会话/工作区数据的备份目标，不作工作区来源；挂载掉线时自动跳过同步，不影响本地使用。",
+                    "NAS 已挂载时可作工作区来源（见上方来源卡）；未挂载时仅作会话/工作区数据的同步备份。掉线自动转只读并跳过同步，不影响本地使用。",
                     style = Type.meta.copy(lineHeight = 17.6.sp),
                     color = c.ink3,
                 )

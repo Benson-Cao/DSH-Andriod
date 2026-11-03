@@ -283,6 +283,8 @@ fun S5ChatRunning(
     onBack: () -> Unit,
     /** 是否有进行中的提示词（决定"停止"是否出现） */
     running: Boolean = false,
+    /** v30.30：引擎是否已连接（决定空态走诚实提示还是设计稿演示数据） */
+    connected: Boolean = false,
     /** 上下文占用百分比，来自 ACP usage_update；null 表示协议还没报 */
     contextUsage: Int? = null,
     /** 中断当前提示词（ACP: session/cancel） */
@@ -351,7 +353,9 @@ fun S5ChatRunning(
                 0 -> {
                     Spacer(Modifier.height(4.dp))
 
-                    // 有真实会话时渲染 ACP 推来的消息，否则退回设计稿演示数据
+                    // 有真实会话时渲染 ACP 推来的消息；未连接时退回设计稿演示数据。
+                    // v30.30：已连接但还没有消息 → 诚实空态，不再渲染演示对话——
+                    // 真机实锉：演示分支的假思考/假回答被当成"回复内容不对"报上来。
                     if (hasLive) {
                         liveMessages.forEach { m ->
                             when (m.role) {
@@ -370,8 +374,23 @@ fun S5ChatRunning(
                                     DshAnswerText(m.text)
                             }
                         }
+                    } else if (connected) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(top = 48.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text("会话已就绪", style = Type.secTitle, color = c.ink)
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "引擎已连接；本页不回放历史消息（ACP 限制）。\n在首页输入即可继续本会话对话。",
+                                style = Type.meta.copy(lineHeight = 17.6.sp),
+                                color = c.ink3,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            )
+                        }
                     } else {
-                        DshUserBubble(userText)
+                        // 演示分支只在引擎未连接时出现；空文本不渲染空气泡（真机见过）
+                        if (userText.isNotBlank()) DshUserBubble(userText)
 
                         DshFold(
                             title = "已思考 · 2.4s",

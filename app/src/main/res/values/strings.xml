@@ -235,4 +235,8 @@
     <!-- Donate Preference -->
     <string name="donate_preference_title">Donate</string>
 
+    <!-- v31：App 原生设置页（Compose）快捷方式标签 -->
+    <string name="shortcut_app_settings_short">App 设置</string>
+    <string name="shortcut_app_settings_long">打开 App 原生设置</string>
+
 </resources>

@@ -2,6 +2,102 @@
   if(document.documentElement&&document.documentElement.getAttribute('data-dsh-error')){return;}
   var SID='dsh-m-shell';
   if(document.getElementById(SID)){return;}
+  // v31 · 供原生 App 设置页（Compose）的「网页设置」行回程调用：
+  //   重新打开 dsh web 的设置浮层。流程 = 给 body 打一次性标记
+  //   dsh-web-settings-req（syncOvFlag 的原生页拦截看到它就放行），
+  //   再程序化点击主界面的设置按钮。按钮用 aria-label/title 模糊匹配
+  //   「设置/Setting」—— React 合成事件对原生 click() 响应良好（CDP 实测过）。
+  //   找不到按钮就清标记返回 false，原生页侧提示即可，不硬猜。
+  // v32 · 接受可选分区名（「通用设置/模型/内置插件/Agent 预设」）：点开面板后由
+  //   __dshQueueSectionDeeplink 等面板到 L2，再程序化点对应 navCell 直达分区内容
+  //   —— 用户从原生设置列表点击后直接落到分区详情，网页设置列表页（图四）
+  //   从此不再出现（backOneLevel 的深链标记负责返回语义，见 setL2 调用点）。
+  window.__dshOpenWebSettings=function(section){
+    try{
+      var bd=document.body;
+      if(!bd){return false;}
+      // v31.1 · 两轮匹配：
+      //   第 1 轮 —— 顶栏/导航范围内的按钮，aria-label/title 含「设置/Setting」；
+      //   第 2 轮 —— 全页面兜底：textContent **精确等于**「设置/Settings」且可见的按钮。
+      //     精确匹配是为了不误点「返回设置」「通用设置」这类按钮。
+      //     真机实测（vivo, dsh 0.2.x）：设置入口在侧栏抽屉底部，只有文本、
+      //     没有 aria-label，第 1 轮找不到 —— 必须有第 2 轮才能命中。
+      var sels=[
+        'header button,[class*="_topbar"] button,[class*="_header"] button,nav button,[role="banner"] button',
+        'button,[role="button"]'
+      ];
+      for(var s=0;s<sels.length;s++){
+        var cands=document.querySelectorAll(sels[s]);
+        for(var i=0;i<cands.length;i++){
+          var el=cands[i];
+          if(el.disabled){continue;}
+          var al=((el.getAttribute('aria-label')||'')+' '+(el.getAttribute('title')||'')).toLowerCase();
+          if(al.indexOf('设置')>=0||al.indexOf('setting')>=0){
+            bd.classList.add('dsh-web-settings-req');
+            el.click();
+            if(section){window.__dshQueueSectionDeeplink(section);}
+            return true;
+          }
+        }
+        // 第 2 轮只对最后一个（全页面）选择器生效
+        if(s===sels.length-1){
+          for(var j=0;j<cands.length;j++){
+            var e2=cands[j];
+            if(e2.disabled){continue;}
+            var tx=(e2.textContent||'').trim();
+            if((tx==='设置'||tx==='Settings')&&(e2.offsetWidth||e2.offsetHeight)){
+              bd.classList.add('dsh-web-settings-req');
+              e2.click();
+              if(section){window.__dshQueueSectionDeeplink(section);}
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    }catch(eOpenWs){ return false; }
+  };
+  // v32 · 分区深链：等设置面板到 L2（navCell 渲染完成）后程序化点对应分区行。
+  //   data-dsh-web-deeplink 标记供 backOneLevel 识别 —— 深链详情页按返回时
+  //   关面板 + 拉回原生设置页，而不是 setL2 翻回网页设置列表。
+  //   sbTap 在 mount 作用域，经 window.__dshSbTap 转交（见 sbTap 定义处）。
+  window.__dshQueueSectionDeeplink=function(sec){
+    try{
+      var waited=0;
+      var iv=setInterval(function(){
+        waited+=140;
+        var bb=document.body;
+        var cell=window.__dshFindSectionCell?window.__dshFindSectionCell(sec):null;
+        var l2=bb&&bb.classList.contains('dsh-s-l2');
+        if(l2&&cell){
+          clearInterval(iv);
+          bb.setAttribute('data-dsh-web-deeplink','1');
+          bb.setAttribute('data-dsh-deeplink','1');
+          try{ if(window.__dshSbTap){window.__dshSbTap(cell);}else{cell.click();} }
+          finally{ bb.removeAttribute('data-dsh-deeplink'); }
+          return;
+        }
+        if(waited>=4200){
+          clearInterval(iv);
+          if(bb){bb.removeAttribute('data-dsh-web-deeplink');}
+        }
+      },140);
+    }catch(eQ){}
+  };
+  // v32 · 在设置面板导航列表里找分区行（.dsh-s-nav 下 textContent 匹配的 navCell）。
+  //   精确匹配优先；包含匹配兜底（限长度防误点「插件市场」之于「内置插件」）。
+  window.__dshFindSectionCell=function(sec){
+    try{
+      var cells=document.querySelectorAll('.dsh-s-nav [class*="_navCell"]');
+      var fb=null;
+      for(var i=0;i<cells.length;i++){
+        var t=String(cells[i].textContent||'').replace(/\s+/g,'');
+        if(t===sec){return cells[i];}
+        if(!fb&&t.indexOf(sec)>=0&&t.length<=sec.length+4){fb=cells[i];}
+      }
+      return fb;
+    }catch(eF){ return null; }
+  };
   function detectDark(){
     var b=document.body;
     if(!b){return;}
@@ -350,6 +446,8 @@ var ovCloseTried=false;
         var bd=document.body;
         _lvl=0;   // r88：面板退出（无论哪种语义）层级记忆一并归零
         if(bd){bd.classList.remove('dsh-s-l2');bd.classList.remove('dsh-s-l3');bd.classList.remove('dsh-ov-open');
+          // v32：面板关闭 = 深链会话结束，标记一并清掉，避免影响下一次普通会话。
+          bd.removeAttribute('data-dsh-web-deeplink');
           // r87：keepDrawer=true（二级返回的"回设置页"语义）时**保住抽屉**；
           //   默认 false = r79 的彻底退出语义（连带收抽屉）。
           if(!keepDrawer){bd.classList.remove('dsh-drawer-open');}}
@@ -594,6 +692,26 @@ window.addEventListener('popstate',function(ev){
         if(on!==b.classList.contains('dsh-ov-open')){
           if(on){
             b.classList.add('dsh-ov-open');
+            // v31 · 设置面板 → 原生 Compose 设置页（原生覆盖层重写）：
+            //   浮层一出现即拉起原生页，并把 HTML 面板程序化关掉 —— 用户点
+            //   「设置」看到的是原生页，而不是网页浮层。三条护栏：
+            //   ① dsh-web-settings-req 标记 = 用户从原生页点「网页设置」主动
+            //      回程，放行不拦（一次性，用完即清）；
+            //   ② 1.2s 去抖：r82 的几何抖动（forceOpen 保活）不会连发拉起；
+            //   ③ dshNative 不存在（非 App 环境/桥未就绪）时什么都不做，
+            //      行为与旧版完全一致。
+            try{
+              if(window.dshNative && window.dshNative.openAppSettings){
+                if(b.classList.contains('dsh-web-settings-req')){
+                  b.classList.remove('dsh-web-settings-req');
+                }else if(!window.__dshNativeSettingsAt || Date.now()-window.__dshNativeSettingsAt>1200){
+                  window.__dshNativeSettingsAt=Date.now();
+                  window.dshNative.openAppSettings();
+                  closeSettingsPanel(false);
+                  dlog('[dsh] 设置面板 -> 原生 App 设置页（v31 覆盖层重写）');
+                }
+              }
+            }catch(eNativeSet){ dlog('[dsh] openAppSettings 异常: '+eNativeSet); }
           }else{
             b.classList.remove('dsh-ov-open');
           }
@@ -632,6 +750,20 @@ window.addEventListener('popstate',function(ev){
       var _lvl=0;
       function setL2(){_lvl=2;b.classList.remove('dsh-s-l3');b.classList.add('dsh-s-l2');}
       function setL3(){_lvl=3;b.classList.remove('dsh-s-l2');b.classList.add('dsh-s-l3');}
+      // v32 · 分区深链的返回语义：从深链详情页返回 → 关面板 + 拉回原生设置页，
+      //   绝不 setL2 翻回网页设置列表（图四页面按用户要求移除）。
+      //   返回 true = 已按深链语义处理；false = 非 deep-link 会话，走原逻辑。
+      //   __dshNativeSettingsAt 去抖与 syncOvFlag 的拦截同款（防二次拉起）。
+      function deeplinkBackToNative(){
+        var bd=document.body;
+        if(!bd||!bd.getAttribute('data-dsh-web-deeplink')){return false;}
+        if(!(window.dshNative&&window.dshNative.openAppSettings)){return false;}
+        bd.removeAttribute('data-dsh-web-deeplink');
+        try{ window.__dshNativeSettingsAt=Date.now(); window.dshNative.openAppSettings(); }catch(eN){}
+        closeSettingsPanel(false);
+        try{ dlog('[dsh] deeplink back -> native settings'); }catch(eD){}
+        return true;
+      }
       // r112 · **首开强制回列表**（修真机「点设置直接跳到通用设置/图一」）。
       //   真机根因（r111 复现实锤）：dsh 设置面板"记住上次页面」，开屏即落在
       //   通用设置详情页；而开屏过渡窗口里 navList 可能还没渲染到 DOM →
@@ -1190,6 +1322,8 @@ window.addEventListener('popstate',function(ev){
           if(!mounted){_ovArmed=false;}
           if(!mounted||wasClosing){
             b.classList.remove('dsh-s-l2');b.classList.remove('dsh-s-l3');
+            // v32：面板真没了 → 深链会话标记同步失效（r112 同款"解武装"思路）。
+            b.removeAttribute('data-dsh-web-deeplink');
           }
           // r82：面板还在树上且没在关 → ov-open 也保持（forceOpen），
           // 避免几何抖动把"开着"翻成"关了"（幽灵开合的另一半）。
@@ -1297,7 +1431,8 @@ window.addEventListener('popstate',function(ev){
                 //   差异（r84 真机验证暴露）一眼可见。
                 var coll=collapseExpandedCards();
                 try{ dlog('[dsh] backOneLevel l3: collapse='+coll); }catch(eC){}
-                if(!coll){
+                // v32：深链会话且无展开卡片 → 关面板回原生设置页；非深链维持 setL2。
+                if(!coll&&!deeplinkBackToNative()){
                   setL2();
                 }
               }
@@ -1319,7 +1454,7 @@ else{
                 //     就算真在列表页也只是多按一次才退出到设置页）。
                 //   ⚠️ 不能反过来：缺类一律关闭就是 r80 的"上上级"。
                 if(ovCloseRequested){closeSettingsToDrawer();}
-                else{setL2();}
+                else if(!deeplinkBackToNative()){setL2();}
               }
               handled=true;
             }
@@ -1824,6 +1959,8 @@ else{
         +String(el.textContent||'').trim().slice(0,12)); }catch(eD){}
       return true;
     }
+    // v32 · 顶层 __dshQueueSectionDeeplink 的分区深链要用 sbTap（跨作用域转交）。
+    try{ window.__dshSbTap=sbTap; }catch(eXT){}
     function findSidebarSettingsTrigger(sb){
       // 优先：文本恰为「设置」的按钮/行（真机底部行是 图标+文字，textContent 含图标
       // 字符/空白，所以用 includes + 长度上限，不匹配「通用设置」等长文案）。
@@ -1896,6 +2033,9 @@ else{
       },140);
     }
     function ensureDrawerPluginRow(){
+      // v33 · 用户要求侧边栏与官方一致 —— 不再注入「插件」行（官方侧栏自带
+      //   插件/自动化任务/更多/设置）。函数壳保留，调用点不动。
+      return;
       if(!mq.matches){return;}
       var sb=document.querySelector('div[class*="sidebarCol"]');
       if(!sb){return;}
@@ -2178,6 +2318,8 @@ else{
         ? window.dshSaf : null;
     }
     function ensureDrawerExportRow(){
+      // v33 · 同上：官方侧边栏不注入「导出数据」行（导出面板入口随之移除）。
+      return;
       if(!mq.matches){return;}
       var sb=safBridge();
       if(!sb){return;}
@@ -4093,6 +4235,10 @@ else{
   };
 
   function ensureCapabilityRows(){
+    // v33 · 用户要求：侧边栏保持与官方 WebView 侧边栏一模一样 —— 不再注入
+    //   「能力」分组（轨迹/工作区/任务看板/指令面板/操作审批）。保留函数壳只为
+    //   不打断既有调用点（init + 600ms 轮询），内部直接返回。
+    return;
     var sb = document.querySelector('div[class*="sidebarCol"]');
     if(!sb){ return; }
     if(document.getElementById('dsh-v4-caps')){ return; }

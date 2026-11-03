@@ -322,6 +322,21 @@
     }
 
     // ---- 补丁安装 ----
+    // r151 · patch 后必须保留原函数的**自有静态属性**（hasOwnProperty 过滤）。
+    //   真机事故：patchCb('realpath') 把 fs.realpath 覆盖成普通函数，丢了原生
+    //   realpath 自带的 .native（fs.realpath.native）→ @deepseek-ai/dsh-fs-local
+    //   里 promisify(realpath.native) 收到 undefined → ERR_INVALID_ARG_TYPE →
+    //   fs 服务导入失败 → sessionController / workspace-files / ptc-runtime
+    //   全部 pending（waiting for service: fs）→ 网页「新建会话失败」。
+    //   只在 SAF 目录配置了才 patch（apply 后置），但一旦 patch 就必须带上。
+    function carryStatics(from, to) {
+      if (typeof from !== 'function' || typeof to !== 'function') return;
+      for (var k in from) {
+        if (Object.prototype.hasOwnProperty.call(from, k) && !(k in to)) {
+          try { to[k] = from[k]; } catch (eCopy) { }
+        }
+      }
+    }
     function patchAsync(obj, name, fn) {
       var orig = obj[name];
       if (typeof orig !== 'function') return;
@@ -331,6 +346,7 @@
         try { return fn(rel, arguments); }
         catch (e) { return Promise.reject(e); }
       };
+      carryStatics(orig, obj[name]);
     }
 
     // fs/promises
@@ -392,6 +408,7 @@
           .then(function () { return fn(rel, arguments); })
           .then(function (v) { cb(null, v); }, function (e) { cb(e); });
       };
+      carryStatics(orig, fs[name]);
     }
     patchCb('readFile', function (rel) { return safRead(rel); });
     patchCb('writeFile', function (rel, a) { return safWrite(rel, a[1]).then(function () {}); });
@@ -408,6 +425,11 @@
       return callJson('rename', { path: rel, to: relTo }).then(function () {});
     });
     patchCb('realpath', function (rel, a) { return Promise.resolve(nodePath.normalize(String(a[0]))); });
+    // 双保险：realpath.native 显式保底 —— dsh-fs-local 第 98 行 promisify(realpath.native)，
+    // 即使 carryStatics 因属性可枚举性差异漏接，这里也保证它是个可调用函数（rel=null 时走原生）。
+    if (typeof fs.realpath === 'function' && typeof fs.realpath.native !== 'function') {
+      try { fs.realpath.native = fs.realpath; } catch (eNativeRp) { }
+    }
     patchCb('access', function (rel) { return Promise.resolve(); });
     patchCb('chmod', function () { return Promise.resolve(); });
 

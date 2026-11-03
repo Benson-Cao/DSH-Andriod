@@ -99,6 +99,37 @@ public final class DshBridge {
     private static volatile long sPnpmCacheAt = 0L;
 
     /**
+     * v31：打开原生 App 设置页（Compose，mobile.SettingsActivity）。
+     *
+     * <p>调用点只有一处（v34/r155 起）：{@code assets/dsh/official-bridge.js} 在
+     * 捕获阶段拦下官方侧栏底部的「设置」入口后调用本方法，网页设置列表页因此
+     * 不再出现。四个分区（通用/模型/内置插件/Agent 预设）已在 r154 全部 Compose 化，
+     * 走 settings/describe|update 一元 RPC 读写真实配置。
+     *
+     * <p>⚠️ 历史：「网页设置」回程行（window.__dshOpenWebSettings）已在 r154 删除，
+     * 不要再按旧注释去找它。
+     */
+    @JavascriptInterface
+    public void openAppSettings() {
+        final Activity a = act();
+        if (a == null) return;
+        a.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    android.content.Intent it = new android.content.Intent(
+                        a, com.dsh.harness.mobile.SettingsActivity.class);
+                    a.startActivity(it);
+                    // 与 SettingsActivity 的进入转场一致（右滑入）；低版本显式指定
+                    a.overridePendingTransition(
+                        com.termux.R.anim.slide_in_right, com.termux.R.anim.slide_out_left);
+                } catch (Throwable t) {
+                    Log.w(TAG, "打开原生设置页失败: " + t.getMessage());
+                }
+            }
+        });
+    }
+
+    /**
      * r65：注入脚本上报"当前这一级返回该由 JS 处理"（设置面板 / 抽屉这类
      * <b>覆盖层</b>开着）。
      *
@@ -115,6 +146,32 @@ public final class DshBridge {
         if (a instanceof MainActivity) {
             ((MainActivity) a).setJsBackHandled(handled);
         }
+    }
+
+    /**
+     * v30.38：页面持续上报自己的真实深浅色（不再只在 onPageFinished 探一次）。
+     *
+     * <p>为什么需要：dsh 主题是 {@code ui-theme.preference}（跟随系统/浅色/深色），
+     * 用户在原生设置页改完后返回，WebView 不会 reload —— 而
+     * {@code DshWebViewClient.probeTheme()} 只在加载完成时跑那几次，于是系统栏
+     * 一直停在旧颜色（真机实测：dsh 已深色、状态栏仍是浅色，顶部一条白边）。
+     *
+     * <p>由 {@code official-bridge.js} 每 700ms 采样一次，**只有变化时**才过桥
+     * （JS 侧已去重），因此这里不会产生高频 IO。
+     */
+    @JavascriptInterface
+    public void applyDshTheme(final boolean dark) {
+        final Activity a = actRef.get();
+        if (!(a instanceof MainActivity)) { return; }
+        a.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    ((MainActivity) a).applyDshTheme(dark);
+                } catch (Throwable t) {
+                    Log.w(TAG, "应用 dsh 主题失败: " + t.getMessage());
+                }
+            }
+        });
     }
 
     /**

@@ -70,6 +70,10 @@ fun BoxScope.S4Drawer(
     onExport: () -> Unit = {},
     /** v20：会话分组「已归档 · 全部」→ S48 归档管理 */
     onArchived: () -> Unit = {},
+    /** v23：本地模型集群入口 → S51LocalModel */
+    onLocalModel: () -> Unit = {},
+    /** v23：遥控电脑集群入口 → S54HostOverview */
+    onRemote: () -> Unit = {},
     /** v30.23：长按会话 → 删除（真实文件删除 + 刷新列表） */
     onDeleteSession: (String) -> Unit = {},
     /** v30.23：长按会话 → 归档（移动到 .dsh/sessions-archive/ + 刷新列表） */
@@ -123,6 +127,8 @@ fun BoxScope.S4Drawer(
             NavRow("自动化任务", DshIcons.Schedule, selected = selectedNav == 2, badge = "3", onClick = onAutomation)
             NavRow("导出数据", DshIcons.FileDownload, selected = false, onClick = onExport)
             NavRow("存储目录", DshIcons.FolderShared, selected = false, onClick = onStorage)
+            NavRow("本地模型", DshIcons.Memory, selected = false, onClick = onLocalModel)
+            NavRow("遥控电脑", DshIcons.Hub, selected = false, onClick = onRemote)
         }
 
         // 会话分组区工具状态（设计稿 S4「工作区」分组头的 搜索/排序/添加）
@@ -318,7 +324,7 @@ fun BoxScope.S4Drawer(
                 title = "设置",
                 icon = DshIcons.Settings,
                 selected = false,
-                badge = "v0.2.1-alpha.4",
+                badge = "v0.2.2-alpha.1",
                 onClick = onSettings,
             )
         }

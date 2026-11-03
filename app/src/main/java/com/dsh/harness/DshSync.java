@@ -73,6 +73,12 @@ public final class DshSync {
 
     /** 远端根目录（相对各协议的基础连接，如 <share>/dsh-phone/storages）。 */
     static final String REMOTE_ROOT = "dsh-phone/storages";
+
+    /**
+     * 遥控电脑集群：NAS 上「宿主状态」JSON 的相对路径（与桌面发布脚本约定一致）。
+     * 桌面端把在线/锁/心跳/任务队列写到这里，手机端（S54–S60）读取。
+     */
+    public static final String REMOTE_HOST_PATH = "dsh-phone/remote/host.json";
     /** 本地源目录（相对 DshBootstrap.home()）。 */
     private static final String LOCAL_REL = ".dsh/storages";
     /** 冲突副本后缀。 */
@@ -160,16 +166,39 @@ public final class DshSync {
 
     /** 由 type/host/port/share 拼出给用户看的连接串（也写回 url 字段）。 */
     static String displayUrl(String type, String host, String port, String share) {
-        String h;
-        if ("smb".equals(type)) h = "smb://" + host;
-        else if ("sftp".equals(type)) h = "sftp://" + host;
-        else h = "http://" + host;
-        if (port != null && !port.isEmpty()) h += ":" + port;
+        String u = buildBaseUrl(type, host, port);
         if (share != null && !share.isEmpty()) {
-            if (!share.startsWith("/")) h += "/";
-            h += share;
+            if (!share.startsWith("/")) u += "/";
+            u += share;
         }
-        return h;
+        return u;
+    }
+
+    /**
+     * 由 type/host/port 构造 baseUrl。createTransport 与 displayUrl **必须共用**这一个
+     * 实现，保证「显示的地址」=「实际请求的地址」——v30.29 真机实锉两者不一致的代价：
+     * createTransport 容忍用户把完整 http:// 地址填进 host（v30.6），而 displayUrl
+     * 不剥前缀直接拼 "http://" + host → 存出 "http://http://192.168.0.108:5005"，
+     * 设备卡标题 hostOf() 只剥一次协议变成 "http:"。
+     */
+    static String buildBaseUrl(String type, String host, String port) {
+        String h = host == null ? "" : host.trim();
+        String lower = h.toLowerCase(java.util.Locale.ROOT);
+        boolean hasScheme = lower.startsWith("http://") || lower.startsWith("https://")
+                || lower.startsWith("smb://") || lower.startsWith("sftp://");
+        StringBuilder u = new StringBuilder();
+        if (hasScheme) {
+            // 用户直接粘贴了完整地址：协议原样保留（无显式端口才补 :port）
+            u.append(h);
+            if (port != null && !port.isEmpty() && !h.matches(".*:\\d+$")) u.append(':').append(port);
+        } else {
+            if ("smb".equals(type)) u.append("smb://");
+            else if ("sftp".equals(type)) u.append("sftp://");
+            else u.append("http://");
+            u.append(h);
+            if (port != null && !port.isEmpty()) u.append(':').append(port);
+        }
+        return u.toString();
     }
 
     public static boolean isConfigured(Context ctx) {
@@ -460,18 +489,9 @@ public final class DshSync {
                                        String share, String user, String pass) {
         if ("smb".equals(type)) return new DshSmbClient(host, port, share, user, pass);
         if ("sftp".equals(type)) return new DshSftpClient(host, port, share, user, pass);
-        // 默认 WebDAV。host 容忍用户直接粘贴完整 http(s):// 地址（v30.6）：
-        // 带协议就用原样（无显式端口才补 :port），纯 IP/主机名才补 http:// 前缀。
-        String h = host == null ? "" : host.trim();
-        StringBuilder u = new StringBuilder();
-        if (h.startsWith("http://") || h.startsWith("https://")) {
-            u.append(h);
-            if (port != null && !port.isEmpty() && !h.matches(".*:\\d+$")) u.append(':').append(port);
-        } else {
-            u.append("http://").append(h);
-            if (port != null && !port.isEmpty()) u.append(':').append(port);
-        }
-        return new DshWebDavClient(u.toString(), user, pass);
+        // 默认 WebDAV/SMB/SFTP 的 baseUrl 统一走 buildBaseUrl（与 displayUrl 共用，
+        // 保证显示 = 实际请求；host 容忍用户直接粘贴完整 http(s):// 地址，v30.6/v30.30）。
+        return new DshWebDavClient(buildBaseUrl(type, host, port), user, pass);
     }
 
     // ================= 同步主流程 =================
@@ -656,6 +676,101 @@ public final class DshSync {
         } catch (Throwable t) {
             Log.w(TAG, "保留冲突副本失败: " + t.getMessage());
             return null;
+        }
+    }
+
+    // ================= 遥控电脑集群：远端宿主状态读写 =================
+
+    /**
+     * 读取 NAS 上的任意文本文件内容（遥控电脑集群用：读取桌面宿主发布的 host.json）。
+     *
+     * <p>必须在后台线程调用。未配置 / 连不上 / 远端没有该文件 / 解析 IO 异常，均返回 {@code null}；
+     * 失败时 {@link NasTransport#lastError()} 可取人类可读原因（调用方也可忽略返回值）。
+     *
+     * <p>路径约定见 {@link #REMOTE_HOST_PATH}；相对路径以 NAS 共享根目录为基准，与
+     * {@link #REMOTE_ROOT} 同构。
+     */
+    public static String readRemoteText(Context ctx, String relPath) {
+        if (!isConfigured(ctx)) return null;
+        File tmp = null;
+        NasTransport tx = createTransport(ctx);
+        try {
+            if (!tx.ping()) { markPing(ctx, false); return null; }
+            markPing(ctx, true);
+            tmp = File.createTempFile("dsh_remote_", ".tmp", ctx.getCacheDir());
+            if (!tx.get(relPath, tmp)) return null;
+            return readFileText(tmp);
+        } catch (Throwable t) {
+            Log.w(TAG, "readRemoteText 失败: " + relPath, t);
+            return null;
+        } finally {
+            try { tx.close(); } catch (Throwable ignored) { }
+            if (tmp != null) try { tmp.delete(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /**
+     * 写入 NAS 上的任意文本文件（备用：桌面发布脚本一般直接用 WebDAV PUT；
+     * 手机侧目前以只读为主，此方法留作本地运行时回写自身状态等场景）。
+     *
+     * @return 是否写入成功
+     */
+    public static boolean writeRemoteText(Context ctx, String relPath, String text) {
+        if (!isConfigured(ctx)) return false;
+        File tmp = null;
+        NasTransport tx = createTransport(ctx);
+        try {
+            if (!tx.ping()) { markPing(ctx, false); return false; }
+            markPing(ctx, true);
+            int slash = relPath.lastIndexOf('/');
+            if (slash > 0) tx.mkdirs(relPath.substring(0, slash));
+            tmp = File.createTempFile("dsh_remote_", ".tmp", ctx.getCacheDir());
+            java.io.FileOutputStream out = new java.io.FileOutputStream(tmp);
+            try {
+                out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } finally {
+                try { out.close(); } catch (Throwable ignored) { }
+            }
+            return tx.put(relPath, tmp);
+        } catch (Throwable t) {
+            Log.w(TAG, "writeRemoteText 失败: " + relPath, t);
+            return false;
+        } finally {
+            try { tx.close(); } catch (Throwable ignored) { }
+            if (tmp != null) try { tmp.delete(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /**
+     * 列出 NAS 共享根目录下某相对路径的文件/目录名（供 NativeBridge 的 nas.list 调用）。
+     * 内部复用已持久化的连接配置；未配置或连通失败返回空集合（不抛异常、不造假数据）。
+     */
+    public static java.util.Set<String> listRemote(Context ctx, String relPath) {
+        if (!isConfigured(ctx)) return new java.util.HashSet<>();
+        NasTransport tx = createTransport(ctx);
+        try {
+            if (!tx.ping()) { markPing(ctx, false); return new java.util.HashSet<>(); }
+            markPing(ctx, true);
+            return tx.list(relPath);
+        } catch (Throwable t) {
+            Log.w(TAG, "listRemote 失败: " + relPath, t);
+            return new java.util.HashSet<>();
+        } finally {
+            try { tx.close(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 读取整个文件为 UTF-8 文本（手动循环，避免 Files.readAllBytes 的 API 级别要求）。 */
+    private static String readFileText(File f) throws java.io.IOException {
+        java.io.FileInputStream in = new java.io.FileInputStream(f);
+        try {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+            return new String(bos.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+        } finally {
+            try { in.close(); } catch (Throwable ignored) { }
         }
     }
 }

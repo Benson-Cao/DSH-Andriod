@@ -91,6 +91,8 @@ public final class DshService extends Service {
         // 代理随服务一起收：留着一个没人用的监听端口没有意义，
         // 且下次 start 会重新挑端口/token（旧 token 作废，更安全）。
         SafProxyServer.stop();
+        // r163 方案 B：服务没了，预热 WebView 一并作废（引擎可能也随之被杀）。
+        DshPreloadWeb.invalidate();
         super.onDestroy();
     }
 
@@ -101,17 +103,38 @@ public final class DshService extends Service {
                 try {
                     if (DshProcessManager.isPortOpen(DshProcessManager.DSH_PORT)) {
                         Log.i(TAG, "dsh 已在运行，跳过拉起");
+                        // r163 方案 B：引擎在线 → 立即开始预热首页 WebView。
+                        // 用户点图标时首页已加载完，0 等待进首页。
+                        DshPreloadWeb.ensureStarted(DshService.this);
                         return;
                     }
-                    DshBootstrap.setupIfNeeded(DshService.this);
-                    String err = DshBootstrap.getLastError();
+                    // r163 方案 B：引擎要重启/新起 → 旧预热的页面引用已失效，先作废。
+                    DshPreloadWeb.invalidate();
+                    // r152（官方对齐）：经运行底座选择器解包（PRoot 优先 / Termux 兜底）。
+                    String err;
+                    try {
+                        DshRuntimeSelector.get(DshService.this).bootstrap(DshService.this, null);
+                        err = DshBootstrap.getLastError();
+                    } catch (Throwable e) {
+                        Log.e(TAG, "运行底座解包异常", e);
+                        err = "运行底座解包异常: " + e.getMessage();
+                    }
                     if (err != null) {
                         Log.e(TAG, "环境准备失败: " + err);
                         updateNotification("环境准备失败");
                         return;
                     }
-                    boolean ok = DshProcessManager.start(DshService.this);
+                    // r152（官方对齐）：经运行底座选择器启动引擎进程。
+                    boolean ok;
+                    try {
+                        DshRuntimeSelector.get(DshService.this).startEngine(DshService.this, null);
+                        ok = true;
+                    } catch (Throwable e) {
+                        Log.e(TAG, "拉起 dsh 失败", e);
+                        ok = false;
+                    }
                     Log.i(TAG, "拉起 dsh: " + (ok ? "成功" : "失败"));
+                    if (ok) DshPreloadWeb.ensureStarted(DshService.this);   // r163 方案 B
                     updateNotification(null);
                 } catch (Throwable t) {
                     Log.e(TAG, "保活异常", t);
@@ -161,6 +184,12 @@ public final class DshService extends Service {
                         }
                         try {
                             if (!DshSync.isConfigured(DshService.this)) continue;
+                            // v30.7：S17 选了「仅手动」就只保留定时探测（更新连通性状态供
+                            // S18 只读降级判断），**不搬数据**。真同步由页面「立即同步」触发。
+                            if (DshSync.DIR_MANUAL.equals(DshSync.direction(DshService.this))) {
+                                DshSync.probeHealth(DshService.this);
+                                continue;
+                            }
                             DshSync.Result r = DshSync.syncOnce(DshService.this);
                             // 只在真出问题时打日志；成功不刷屏
                             if (r.ran && !"ok".equals(r.message)) {

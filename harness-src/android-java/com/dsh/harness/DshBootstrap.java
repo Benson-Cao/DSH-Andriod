@@ -30,11 +30,37 @@ import java.util.zip.GZIPInputStream;
 public final class DshBootstrap {
 
     private static final String TAG = "DshBootstrap";
-    public static final int DSH_PORT = 3081;
+    public static final int DSH_PORT = 3080;
     private static final String STAMP = ".dsh-installed";
 
-    /** bundle 修订号。仅当 bundle 布局/内容变化时才需要改（会触发重新解包）。 */
-    private static final String BUNDLE_REV = "v2-usr-home-symlinks";
+    /**
+     * bundle 修订号。仅当 bundle 布局/内容变化时才需要改（会触发重新解包）。
+     *  r150：升到 v3 强制重解包——上一版的 dsh HOME 里残留了一个指向
+     *  127.0.0.1:1080 的 socks5 出网代理配置（PC 构建环境遗留），普通「覆盖安装」
+     *  不会清掉旧 HOME（stamp 命中），导致自检一直卡在 socks5 账号对失败。
+     *  改 BUNDLE_REV 让所有升级用户首启都重解包，拿到干净的 dsh 运行环境。
+     *  r151：bundle 内 dsh 由 0.1.5-rc.1 升级到官方 0.2.1-rc.5（端口随之改回官方 3080），
+     *  并移除针对旧版 0.1.x 桌面优先布局的手机适配注入层（mobile.css/js/market.css 等）——
+     *  官方 0.2.x web 已自带移动端响应式布局。凡是带着旧 HOME 的升级安装都必须重解包，
+     *  否则会保留 0.1.5 的 node_modules 却跑新启动脚本（端口/注入全错配）。
+     *  r152：三个启动链修复——① flock.js 平台守卫放行 android（Termux node 报
+     *  platform='android'，原守卫直接抛 ERR_FLOCK_UNSUPPORTED_PLATFORM，会话写打开
+     *  必炸 → profile boot StartupError，服务起不来；现在 android 走 try/catch 降级
+     *  stub，并给 process.report.getReport() 加保护）；② 补齐缺失传递依赖
+     *  @sindresorhus/is@7 / @sindresorhus/merge-streams@4 / mime-types@3（本地
+     *  Windows 引导实测 otel/plugin-manager/session-controller 等 8 个插件降级的根因）；
+     *  ③ 补 fontkit/dist/module.mjs（fontkit 2.0.4 exports 指向未发布文件，
+     *  office-to-pdf 降级的根因）。本地引导已验证 8 降级 → 1（仅本地 profile 特有）。
+     *  r161（v30.42）：补 @mixmark-io/domino 整包（turndown 的 DOM 依赖；原 bundle 里
+     *  只有 7 个条目，源里 1023 个 → 启用 tool-web 后必报 Cannot find module）
+     *  + 补 @deepseek-ai/dsh-client-ui-settings-account（官方设置「账户」分区的实现，
+     *  原 bundle 里整包只有 LICENSE + lib/client.js，缺 package.json）
+     *  + 补 dsh-client-ui-sidebar-documentpreview / dsh-experimental-inspector 的
+     *  package.json 与 lib + 给 dsh-session-persistence-jsonl 打
+     *  「link() 失败降级 rename」补丁（Android 应用数据目录禁硬链接，否则每次
+     *  开新会话 EACCES）。重解包时由 cleanupExtracted 保留 home/.dsh 不丢用户数据。
+     */
+    private static final String BUNDLE_REV = "v4-dsh-0.2.1-rc.5-r161-deps";
 
     /** AGP 会把 assets 里的 .tar.gz 重命名为 .tar，这里两种都试。 */
     private static final String[] BUNDLE_NAMES = {
@@ -255,6 +281,32 @@ public final class DshBootstrap {
         }
     }
 
+    /** r152（官方对齐）：是否已安装且 bundle 修订号一致（供运行底座选择器判重）。 */
+    public static boolean isInstalled(Context ctx) {
+        File stamp = new File(ctx.getFilesDir(), STAMP);
+        return stamp.exists() && BUNDLE_REV.equals(readStamp(stamp));
+    }
+
+    /**
+     * r152（官方对齐）：通用归档解包入口（PRoot 底座复用）。
+     * 自动按 gzip 魔数判断是否先 gunzip，再交给极简 tar 解包器（已含符号链接 /
+     * 校验和 / Zip-Slip 防护，与 Termux 派同一套硬化逻辑）。
+     */
+    public static void extractStream(InputStream in, File dest, ProgressListener listener)
+            throws Exception {
+        BufferedInputStream raw = new BufferedInputStream(in);
+        raw.mark(2);
+        int m1 = raw.read();
+        int m2 = raw.read();
+        raw.reset();
+        boolean isGzip = (m1 == 0x1f && m2 == 0x8b);
+        if (isGzip) {
+            TarGz.extract(new GZIPInputStream(raw), dest, listener);
+        } else {
+            TarGz.extract(raw, dest, listener);
+        }
+    }
+
     private static void setupLocked(Context ctx) {
         File stamp = new File(ctx.getFilesDir(), STAMP);
         boolean needExtract = !stamp.exists() || !BUNDLE_REV.equals(readStamp(stamp));
@@ -325,6 +377,7 @@ public final class DshBootstrap {
             ensureIcuLinks(ctx);
             ensureKoffiNative(ctx);
             writeOpensslConf(ctx);
+            ensureProfilePatch(ctx);
             createLauncher(ctx);
             Log.i(TAG, "bootstrap ready rev=" + BUNDLE_REV);
         } catch (Throwable e) {
@@ -431,6 +484,62 @@ public final class DshBootstrap {
         }
     }
 
+    /** 本 App 追加到 cordis.patch.yml 的那一段的起始标记（用来判重）。 */
+    private static final String PATCH_MARKER = "# dsh-phone-managed: v1";
+
+    /**
+     * v30.42：保证 profile 的 cordis.patch.yml 带上本 App 必需的补丁项。
+     *
+     * 为什么必须在运行时做：cordis.patch.yml 是 dsh 首次启动自己创建的
+     * （首行固定为 "Your patch layer for this dsh profile…"），打包时无法预置；
+     * 而缺了下面两项，全新安装 / 清数据后会立刻复现两个已修好的缺陷：
+     *   · tool-web 被 dsh-web-app 的 bundle patch 设成 disabled，而 standard 等
+     *     agent preset 又把它列为必备插件（它自身声明 ctx.web 为 required）
+     *     → 建会话报 agent-preset/invalid: tool-web ... never started
+     *     → 表现为「选完工作区目录点打开，工作区没设上」；
+     *   · experimental-inspector 用 node-addon-require-builtin 去 require Node 内部
+     *     模块 internal/modules/esm/loader，Termux 版 node 没导出 → 每次启动报
+     *     "1 entry did not activate"（手机上也用不到 DevTools 面板，直接禁用）。
+     *
+     * 只在文件存在且不含标记时**追加**一段，绝不覆盖用户自己写的条目。
+     */
+    private static void ensureProfilePatch(Context ctx) {
+        File f = new File(home(ctx), ".dsh/profiles/web/cordis.patch.yml");
+        if (!f.exists()) return; // 还没首启过，等 dsh 建好 profile 后下次启动再写
+        try {
+            String cur = new String(IoUtil.readAllBytes(f), "UTF-8");
+            if (cur.contains(PATCH_MARKER)) return;
+            StringBuilder sb = new StringBuilder(cur);
+            if (!cur.endsWith("\n")) sb.append('\n');
+            sb.append('\n')
+              .append("# ---------------------------------------------------------------\n")
+              .append(PATCH_MARKER).append("   （本段由 DSH Phone 自动写入，勿删这行标记）\n")
+              .append("#\n")
+              .append("# tool-web：dsh-web-app 的 bundle patch 把它设成 disabled: true，而\n")
+              .append("#   standard / cordis 等 agent preset 又把它列为必备插件（它自身声明\n")
+              .append("#   ctx.web 为 required）→ 建会话必被 agent-preset 校验拦下：\n")
+              .append("#     agent-preset/invalid: tool-web (@deepseek-ai/dsh-tool-web): never started\n")
+              .append("#   表现就是「选完工作区目录点打开，工作区没设上」。\n")
+              .append("# experimental-inspector：手机用不到 DevTools 面板，且它 require 了 Node\n")
+              .append("#   内部模块 internal/modules/esm/loader（Termux node 未导出），每次启动\n")
+              .append("#   都会多一条 did not activate 告警。\n")
+              .append("# ---------------------------------------------------------------\n")
+              .append("- id: tool-web\n")
+              .append("  name: \"@deepseek-ai/dsh-tool-web\"\n")
+              .append("  config:\n")
+              .append("    fetch: true\n")
+              .append("    searchTimeoutMs: 60000\n")
+              .append("  disabled: false\n")
+              .append("- id: experimental-inspector\n")
+              .append("  name: \"@deepseek-ai/dsh-experimental-inspector\"\n")
+              .append("  disabled: true\n");
+            IoUtil.writeAllBytes(f, sb.toString().getBytes("UTF-8"));
+            Log.i(TAG, "已向 cordis.patch.yml 追加本机必需补丁（tool-web / inspector）");
+        } catch (Exception e) {
+            Log.w(TAG, "写 cordis.patch.yml 失败: " + e.getMessage() + "（继续启动）");
+        }
+    }
+
     private static String readStamp(File f) {
         try {
             return new String(IoUtil.readAllBytes(f), "UTF-8").trim();
@@ -474,8 +583,34 @@ public final class DshBootstrap {
         File dir = ctx.getFilesDir();
         // r72：连带 patch.sh —— 旧补丁不应被拿来对新 bundle 误执行
         //（重解包后马上会从 assets 重新落地一份，见 copyAssetToFile）。
+        // v30.42：解包目录里混着**用户数据** —— home/.dsh 存着会话历史
+        //   （sessions/）、模型与主题配置（profiles/web/cordis.yml 等）、
+        //   API Key（.credentials.yaml）、工作区注册表。原来整棵 home 一律删除，
+        //   BUNDLE_REV 一变就等于把用户的一切清空。这里先把 .dsh 挪到 files/ 暂存，
+        //   删完 home 再挪回去。
+        File userData = new File(dir, "home/.dsh");
+        File stash = new File(dir, ".dsh-preserved");
+        deleteRecursively(stash);
+        boolean preserved = false;
+        if (userData.exists()) {
+            try {
+                preserved = userData.renameTo(stash);
+                if (!preserved) Log.w(TAG, "用户数据暂存失败：.dsh 将随解包一起丢失");
+            } catch (Exception e) {
+                Log.w(TAG, "用户数据暂存异常: " + e.getMessage());
+            }
+        }
         for (String n : new String[] { "usr", "home", "bin", "lib", "node_modules", PATCH_ASSET }) {
             deleteRecursively(new File(dir, n));
+        }
+        if (preserved) {
+            File home = new File(dir, "home");
+            if (!home.exists()) home.mkdirs();
+            if (stash.renameTo(userData)) {
+                Log.i(TAG, "已保留用户数据 home/.dsh（会话/配置/凭据）");
+            } else {
+                Log.w(TAG, "用户数据回填失败，暂存在 " + stash.getAbsolutePath());
+            }
         }
     }
 
@@ -768,7 +903,7 @@ public final class DshBootstrap {
     }
 
     /** 极简 tar 解包器（ustar + GNU 长名 'L'/'K' + 符号链接 '2' + base-256 大小）。 */
-    interface ProgressListener {
+    public static interface ProgressListener {
         void onProgress(int files, long bytes);
     }
 

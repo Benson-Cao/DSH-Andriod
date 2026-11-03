@@ -59,7 +59,7 @@ import java.util.*
  *  - 目录映射条数由实际生效的方向/范围算出，不写死「3 条」。
  */
 @Composable
-fun S51NasSync(
+fun S34NasSync(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onAdd: () -> Unit = {},
@@ -505,7 +505,7 @@ fun S51NasSync(
  * 而不是做个假的路径输入框。
  */
 @Composable
-fun S52NasAdd(
+fun S34NasAdd(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onSaved: () -> Unit = {},
@@ -964,7 +964,14 @@ private fun NasField(
 
 /** 从连接串取主机标识（WebDAV/SMB/SFTP 通用）。 */
 private fun hostOf(u: String): String {
-    var s = u.trim().replaceFirst("(?i)^(https?|smb|sftp)://".toRegex(), "")
+    // 反复剥协议前缀：存储串可能被拼出双前缀（"http://http://…"，v30.29 实锉），
+    // 只剥一次会剩下 "http:" 被当主机名显示
+    var s = u.trim()
+    while (true) {
+        val t = s.replaceFirst("(?i)^(https?|smb|sftp)://".toRegex(), "")
+        if (t == s) break
+        s = t
+    }
     val slash = s.indexOf('/')
     if (slash >= 0) s = s.substring(0, slash)
     val at = s.lastIndexOf('@')

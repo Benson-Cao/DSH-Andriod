@@ -70,9 +70,9 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
 
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
+            <!-- v31：shortcuts meta-data 必须挂在「手机桌面 LAUNCHER」的 Activity 上
+                 （MainActivity）。原来挂在这里（TermuxActivity 只有 LEANBACK_LAUNCHER，
+                 即 Android TV 入口），手机桌面长按图标永远读不到 → 快捷方式全部失效。 -->
         </activity>
 
         <activity-alias
@@ -158,23 +158,62 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- v10 设计稿 18 屏的 Compose 原生入口；作为 LAUNCHER，旧 MainActivity 保留为终端入口 -->
+        <!-- WebView 宿主：按手册作为主入口（LAUNCHER），渲染 dsh Web UI。
+             r163 方案 C：专属启动主题（品牌底色 windowBackground + Android 12+
+             系统 splash），点击图标后全程无白屏。 -->
+        <activity android:name="com.dsh.harness.MainActivity" android:exported="true"
+        android:theme="@style/Theme.DshSplash"
+        android:windowSoftInputMode="adjustResize"
+        android:configChanges="orientation|screenSize|keyboardHidden"
+        android:label="@string/application_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- v31：桌面长按图标快捷方式（「会话」「App 设置」等）——
+                 必须挂在 MAIN/LAUNCHER 的 Activity 上才生效 -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- Compose 原生活动仍保留在代码中，但不再挂 LAUNCHER（WebView 为唯一桌面入口） -->
         <activity android:name="com.dsh.harness.mobile.ComposeProbeActivity" android:exported="true"
         android:windowSoftInputMode="adjustResize"
         android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
         android:label="@string/application_name"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
-        <intent-filter>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent-filter>
-    </activity>
+        </activity>
 
-        <!-- 原终端 / WebView 入口保留，终端能力仍需要 -->
-        <activity android:name="com.dsh.harness.MainActivity" android:exported="true"
+        <!-- v31：App 原生设置页（Compose）。入口 = 桌面长按图标快捷方式（xml/shortcuts.xml）。
+             exported=true：页面无 intent-filter 不会被隐式拉起，仅允许显式启动
+             （快捷方式/adb 调试）；部分 ROM 会拒绝 shell 拉起非导出组件。 -->
+        <activity android:name="com.dsh.harness.mobile.SettingsActivity" android:exported="true"
+        android:launchMode="singleTop"
+        android:windowSoftInputMode="adjustResize"
+        android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+        android:label="@string/shortcut_app_settings_short"
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+        </activity>
+
+        <!-- v35：常驻服务（保活 dsh 引擎）——
+             之前 DshService 根本没在清单里注册，startForegroundService 每次都抛
+             IllegalStateException 被 catch 吞掉 → 服务从未真正起来 →
+             引擎随 App 进程一起死 → 每次点图标都要冷启 node（十几秒白屏）。
+             注册后：服务在后台常驻，引擎一直在，点图标直接进首页（秒开）。
+             stopWithTask=false：任务被划掉也不带停服务。 -->
+        <service android:name="com.dsh.harness.DshService"
+            android:exported="false"
+            android:stopWithTask="false" />
+
+        <!-- v34：应用内网页容器（账户页的「用量明细」「充值」在这里打开，
+             不再跳系统浏览器）。仅内部显式启动，不导出。 -->
+        <activity android:name="com.dsh.harness.mobile.WebPageActivity" android:exported="false"
         android:windowSoftInputMode="adjustResize"
         android:configChanges="orientation|screenSize|keyboardHidden"
-        android:label="@string/application_name">
+        android:label="@string/application_name"
+        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
         </activity>
     <provider
         android:name="androidx.core.content.FileProvider"

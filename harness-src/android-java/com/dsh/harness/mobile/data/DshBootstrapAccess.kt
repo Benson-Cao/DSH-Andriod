@@ -3,6 +3,7 @@ package com.dsh.harness.mobile.data
 import android.content.Context
 import android.util.Log
 import com.dsh.harness.DshBootstrap
+import com.dsh.harness.DshRuntimeSelector
 import com.dsh.harness.ShellRunner
 import java.io.File
 
@@ -40,7 +41,8 @@ object DshBootstrapAccess {
 
 /** 首次安装时解压 dsh bundle（node + $HOME/node_modules）。有 stamp 判重，幂等。 */
     fun ensureBootstrapped(ctx: Context) {
-        DshBootstrap.setupIfNeeded(ctx)
+        // r152（官方对齐）：经运行底座选择器解包（PRoot 优先 / Termux 兜底）。
+        DshRuntimeSelector.get(ctx).bootstrap(ctx, null)
     }
 
     /**

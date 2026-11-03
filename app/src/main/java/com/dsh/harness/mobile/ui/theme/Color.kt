@@ -5,41 +5,49 @@ import androidx.compose.ui.graphics.Color
 /**
  * DeepSeek Harness 设计系统 · 颜色令牌
  *
- * 严格对齐 v10 设计稿（prototype-dsh-mobile-ui-v10.html）的 CSS 变量表：
- *   body[data-theme="light"] .screen { --bg:#F4F6FA; --card:#FFFFFF; ... }
- *   body[data-theme="dark"]  .screen { --bg:#0E1117; --card:#171C25; ... }
+ * 严格对齐 v23 设计稿（DeepSeekHarness手机端设计稿-v23-官方配色.html）的 CSS 变量表：
+ *   body[data-theme="light"] .screen { --bg:#FFFFFF; --card:#FFFFFF; --ink:#1F1F1F; ... }
+ *   body[data-theme="dark"]  .screen { --bg:#151517; --card:#1C1C1F; --ink:#E9EBF0; ... }
+ *   .board                   { --board-bg:#101013; --board-panel:#17171B; ... }
  *
- * 设计稿原文对颜色的约束：
+ * v23 是「官方配色 + 章节重排」版本，相对旧版（v10/v22）的关键变化：
+ *   · 品牌主色从 #5C78FF(暗) 提亮为 #6D86FF，亮色仍 #4D6BFE（官方蓝）
+ *   · 状态四色整体换为官方语义色：ok #12B76A / warn #F79009 / danger #F04438 / purple #7A5AF8
+ *   · 中性色阶重塑：亮色 bg 由 #F4F6FA → #FFFFFF，暗色 bg 由 #0E1117 → #151517，
+ *     ink/line 全部跟随官方灰阶（ink2 #4B5563 / #B4BAC5，line #E8EAF0 / #262A31）
+ *
+ * 设计稿对颜色的约束（沿用）：
  *   "品牌主色取 DeepSeek 蓝，辅助紫用于子代理 / PTC 等「多智能体」语义；
  *    绿 / 琥珀 / 红专用于状态，不作为装饰色。"
- * 所以下面状态色**不允许**拿来做渐变或点缀，只用于状态语义。
+ * 所以状态色**不允许**拿来做渐变或点缀，只用于状态语义。
  */
 
 // ============ 品牌色（两套主题共用，不随主题变） ============
-val BrandLight = Color(0xFF4D6BFE)      // 设计稿 §08 色板 · Brand 主色
-val BrandDark = Color(0xFF5C78FF)
-val Brand2Light = Color(0xFF3A55E0)     // --brand2，hover/按下态
-val Brand2Dark = Color(0xFF4A64F0)
-val PurpleLight = Color(0xFF7A5AF8)     // Agent 辅助紫
-val PurpleDark = Color(0xFF9575FF)
+val BrandLight = Color(0xFF4D6BFE)      // 设计稿 官方蓝 · Brand 主色（亮）
+val BrandDark = Color(0xFF6D86FF)       // 官方蓝（暗，提亮以保对比）
+val Brand2Light = Color(0xFF3A57E8)     // --brand2，hover/按下态（亮）
+val Brand2Dark = Color(0xFF5A74F5)      // --brand2（暗）
+val PurpleLight = Color(0xFF7A5AF8)     // Agent 辅助紫（亮）
+val PurpleDark = Color(0xFF9575FF)      // Agent 辅助紫（暗）
 val Purple2Light = Color(0xFF7A5AF8)    // --purple 深浅同值（设计稿未区分）
 
 // ============ 状态四色（两套主题共用） ============
-val OkLight = Color(0xFF0E9F6E)         // Success 成功
-val OkDark = Color(0xFF25B37F)
-val WarnLight = Color(0xFFC97A00)       // Warn 待确认
-val WarnDark = Color(0xFFE0A33B)
-val DangerLight = Color(0xFFE02E3A)     // Danger 失败
-val DangerDark = Color(0xFFF0606B)
+val OkLight = Color(0xFF12B76A)         // Success 成功（官方绿）
+val OkDark = Color(0xFF3DD68C)
+val WarnLight = Color(0xFFF79009)       // Warn 待确认（官方琥珀）
+val WarnDark = Color(0xFFFFB140)
+val DangerLight = Color(0xFFF04438)     // Danger 失败（官方红）
+val DangerDark = Color(0xFFFF6B5E)
 
 // ============ 品牌中性色（固定不随主题，用于看板上层） ============
-val BoardBg = Color(0xFF0B0E14)
-val BoardPanel = Color(0xFF12161F)
-val BoardPanel2 = Color(0xFF171C27)
-val BoardLine = Color(0xFF242B39)
-val BoardText = Color(0xFFE7EBF3)
-val BoardDim = Color(0xFF8A93A6)
-val BoardDim2 = Color(0xFF5D6678)
+// v23 看板主题：--board-bg:#101013 / --board-panel:#17171B / --board-panel2:#1D1D22
+val BoardBg = Color(0xFF101013)
+val BoardPanel = Color(0xFF17171B)
+val BoardPanel2 = Color(0xFF1D1D22)
+val BoardLine = Color(0xFF2A2A31)
+val BoardText = Color(0xFFE9EBF0)
+val BoardDim = Color(0xFFB4BAC5)
+val BoardDim2 = Color(0xFF858C99)
 
 /**
  * 主题无关的语义令牌集合。
@@ -77,34 +85,34 @@ data class DshColors(
     val mask: Color,
     val bubble: Color,
 ) {
-    /** 状态色的 12~13% 淡底，用于 chip.ok / chip.warn / chip.danger / chip.purple */
+    /** 状态色的淡底，用于 chip.ok / chip.warn / chip.danger / chip.purple（v23 透明度） */
     fun okSoft(): Color = ok.copy(alpha = 0.12f)
     fun warnSoft(): Color = warn.copy(alpha = 0.13f)
     fun dangerSoft(): Color = danger.copy(alpha = 0.12f)
-    fun purpleSoft(): Color = purple.copy(alpha = 0.13f)
+    fun purpleSoft(): Color = purple.copy(alpha = 0.15f)
 
-    /** mono 字色：设计稿 --brand 在代码块里偏亮（色板标 #A9B7FF） */
+    /** mono 字色：设计稿 --brand 在代码块里偏亮（色板标 #A9B7FF 同族） */
     val mono: Color get() = brand.copy(alpha = 0.95f)
 }
 
 val LightColors = DshColors(
-    bg = Color(0xFFF4F6FA),
+    bg = Color(0xFFFFFFFF),
     card = Color(0xFFFFFFFF),
-    card2 = Color(0xFFFFFFFF),
-    ink = Color(0xFF161922),
-    ink2 = Color(0xFF5B6373),
-    ink3 = Color(0xFF98A0B0),
-    line = Color(0xFFEBEEF4),
-    line2 = Color(0xFFF3F5F9),
+    card2 = Color(0xFFF7F8FA),
+    ink = Color(0xFF1F1F1F),
+    ink2 = Color(0xFF4B5563),
+    ink3 = Color(0xFF8A93A6),
+    line = Color(0xFFE8EAF0),
+    line2 = Color(0xFFF0F1F5),
     brand = BrandLight,
     brand2 = Brand2Light,
     soft = Color(0xFFEEF2FF),
-    code = Color(0xFFF6F8FC),
+    code = Color(0xFFF7F8FA),
     ok = OkLight,
     warn = WarnLight,
     danger = DangerLight,
     purple = PurpleLight,
-    sb = Color(0xFF161922),
+    sb = Color(0xFF1F1F1F),
     tabbg = Color(0xE6FFFFFF),      // rgba(255,255,255,.9)
     sheet = Color(0xFFFFFFFF),
     mask = Color(0x66141820),      // rgba(20,24,32,.4)
@@ -112,25 +120,25 @@ val LightColors = DshColors(
 )
 
 val DarkColors = DshColors(
-    bg = Color(0xFF0E1117),
-    card = Color(0xFF171C25),
-    card2 = Color(0xFF1D232E),
-    ink = Color(0xFFECF0F7),
-    ink2 = Color(0xFF9BA5B7),
-    ink3 = Color(0xFF697386),
-    line = Color(0xFF252C38),
-    line2 = Color(0xFF1F2531),
+    bg = Color(0xFF151517),
+    card = Color(0xFF1C1C1F),
+    card2 = Color(0xFF242427),
+    ink = Color(0xFFE9EBF0),
+    ink2 = Color(0xFFB4BAC5),
+    ink3 = Color(0xFF858C99),
+    line = Color(0xFF262A31),
+    line2 = Color(0xFF1E2228),
     brand = BrandDark,
     brand2 = Brand2Dark,
-    soft = Color(0xFF1A2135),
-    code = Color(0xFF12161E),
+    soft = Color(0xFF1E2440),
+    code = Color(0xFF131316),
     ok = OkDark,
     warn = WarnDark,
     danger = DangerDark,
     purple = PurpleDark,
-    sb = Color(0xFFECF0F7),
-    tabbg = Color(0xE613171F),      // rgba(19,23,31,.9)
-    sheet = Color(0xFF1B212C),
+    sb = Color(0xFFE9EBF0),
+    tabbg = Color(0xE6151517),      // rgba(21,21,23,.9)
+    sheet = Color(0xFF1C1C1F),
     mask = Color(0x99000000),      // rgba(0,0,0,.6)
-    bubble = Color(0xFF1E2534),
+    bubble = Color(0xFF1E2440),
 )

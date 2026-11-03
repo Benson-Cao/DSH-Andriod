@@ -22,9 +22,12 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.dsh.harness.mobile.ui.theme.*
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 
 /**
  * 页面骨架三件套：状态栏占位 / 顶栏 / Bottom Sheet。
@@ -87,16 +90,26 @@ fun DshNavBar(
         }
         if (leading != null) leading()
         if (title != null) {
+            // v22 修订版：`.nav .ttl` 改为 **15px / 居中**（旧版是 16px 左对齐）。
+            // 用 weight(1f) 占满中间区 + textAlign.Center，而不是把整条 Row 居中 ——
+            // 否则左右两侧的返回键 / 动作区会被挤到不对称的位置。
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    style = Type.title,
+                    style = Type.title.copy(fontSize = 15.sp),
                     color = c.ink,
+                    textAlign = TextAlign.Center,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (subtitle != null) {
-                    Text(subtitle, style = Type.meta, color = c.ink3, maxLines = 1)
+                    Text(
+                        subtitle,
+                        style = Type.meta,
+                        color = c.ink3,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
                 }
             }
         } else if (leading == null && onBack == null) {
@@ -193,11 +206,18 @@ fun BoxScope.DshSheet(
     }
 
     if (visible) {
+        // v22 修订版 · 横屏/平板：Sheet 最大 480dp 居中（设计稿"Sheet max 480px centered"）。
+        // 手机（Compact）必须走 fillMaxWidth() —— 与 v30.10 逐字节一致。
+        val compact = LocalDshWidth.current == DshWidth.Compact
+        // v30.15：Sheet **包裹内容高度**（短内容不再硬拉 88% 留下一大片空白），
+        // 最高仍封顶 88% 屏高；内容超高时才由内容列内滚。heightIn(max) 让 Column
+        // 走 wrap-content 向上取值，配合内容列 weight(fill=false) 即"短则包裹、长则封顶滚动"。
+        val maxSheetH = (LocalConfiguration.current.screenHeightDp * maxHeightRatio).dp
         Column(
             modifier = modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .fillMaxHeight(maxHeightRatio)
+                .then(if (compact) Modifier.fillMaxWidth() else Modifier.width(480.dp))
+                .heightIn(max = maxSheetH)
                 .clip(shape)
                 .background(c.sheet)
                 .clickable(
@@ -216,10 +236,19 @@ fun BoxScope.DshSheet(
 
             header()
 
-            // 内容区：设计稿"内容超出时 sh-b 内滚，按钮区固定"
+            // 内容区：设计稿"内容超出时 sh-b 内滚，按钮区固定"。
+            // ⚠️ 这里绝不能挂 windowInsetsBottomHeight：v30.10 给内容列加了
+            //    `.windowInsetsBottomHeight(navigationBars)`，真机上它挂在
+            //    `weight(1f)+verticalScroll` 的内容列上会让**整块内容渲染不出来**
+            //    （所有 Sheet 只剩 header/footer；footer 不滚动所以幸免）。
+            //    git 实证：v26(a4a5a06) 内容列无它 → 正常；v30.10(2ad89dc) 加上 → 空。
+            //    恢复 v26 结构；底部避导航栏由 footer（v30.21 起用 navigationBarsPadding，
+            //    原 windowInsetsBottomHeight 会把 footer 列高钉死为 inset、钳制按钮高度）
+            //    或短内容天然不触底来保证，无 footer 的 Sheet 内容都在顶部，不会压导航栏。
+            // fill=false：内容列只取自身高度（不撑满），配合外层 heightIn 实现"短则包裹"。
             Column(
                 Modifier
-                    .weight(1f, fill = true)
+                    .weight(1f, fill = false)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = Space.sheet),
@@ -229,14 +258,25 @@ fun BoxScope.DshSheet(
             }
 
             if (footer != null) {
+                // v30.21 踩坑修正：这里原来用 `.windowInsetsBottomHeight(navigationBars)`，
+                // 它把 footer 列高**钉死为导航栏 inset 高度**（手势导航机上仅 ~18dp），
+                // footer 里的按钮 `.height(66.dp)` 全被约束钳制成 18dp——
+                // 真机实测 footer 按钮永远只有 63px（v30.19 的 46dp、v30.20 的 66dp 全部无效）。
+                // 正解 = navigationBarsPadding()（inset 作为 padding 追加，列包裹内容）。
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .topLine(c.line)
+                        .navigationBarsPadding()
                         .padding(horizontal = Space.sheet, vertical = 12.dp),
                 ) {
                     footer()
                 }
+            } else {
+                // 无 footer 的 Sheet（权限档位/添加/附件）：包裹变短后末行会贴屏幕底，
+                // 补一个底部避导航栏的 Spacer。用 navigationBarsPadding 挂 Spacer（安全，
+                // DshScreen 同款）；切勿把 windowInsetsBottomHeight 挂到内容列（会引爆渲染）。
+                Spacer(Modifier.navigationBarsPadding())
             }
         }
     }
@@ -291,7 +331,17 @@ fun DshEmpty(text: String, modifier: Modifier = Modifier, icon: ImageVector? = n
 
 // ============================ 屏幕外壳 ============================
 
-/** 一屏的标准外壳：状态栏占位 → 内容 → 底部手势区留白。所有 18 屏统一套这个。 */
+/**
+ * 一屏的标准外壳：状态栏占位 → 内容 → 底部手势区留白。所有屏统一套这个。
+ *
+ * v26 方案 B：内容区外面加了一层**最大宽约束 + 居中**的 Column。
+ * 手机（Compact）DshDimens.contentMax = 1000dp，屏宽远小于它 → widthIn
+ * 不触发，布局与 v25 逐像素一致；折叠屏展开/平板才收窄，避免一行文字
+ * 横跨 800dp 那种"很空"的观感。
+ *
+ * 加这层不影响既有语义：内层仍是 ColumnScope，`weight(1f)` 在内部分配、
+ * `fillMaxSize` 填满内层(=外层剩余高度)，与 v25 外层直挂等价。
+ */
 @Composable
 fun DshScreen(
     modifier: Modifier = Modifier,
@@ -305,7 +355,15 @@ fun DshScreen(
             .background(c.bg),
     ) {
         DshStatusBarSpacer()
-        content()
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .widthIn(max = DshDimens.contentMax)
+                .align(Alignment.CenterHorizontally),
+        ) {
+            content()
+        }
         if (bottomBar) {
             Spacer(Modifier.navigationBarsPadding())
             Spacer(Modifier.height(10.dp))

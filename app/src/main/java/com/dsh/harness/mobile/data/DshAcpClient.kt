@@ -256,8 +256,19 @@ class DshAcpClient(private val context: Context) {
             val id = m.getInt("id")
             if (m.has("error")) {
                 emit("✗ id=$id error=${m.get("error")}")
-                _lastError.value = m.optJSONObject("error")?.optString("message")
+                val eo = m.optJSONObject("error")
+                val msg = eo?.optString("message").takeUnless { it.isNullOrEmpty() }
                     ?: m.optString("error")
+                // dsh 把人类可读原因放在 error.data（message 常常只是干巴巴的
+                // "Invalid params"，真机 v30.30 实锉）——不透出 detail 用户无从下手
+                val data = eo?.opt("data")
+                val detail = when (data) {
+                    is String -> data
+                    is JSONObject -> if (data.length() == 0) "" else data.toString()
+                    null -> ""
+                    else -> data.toString()
+                }
+                _lastError.value = if (detail.isEmpty()) msg else "$msg · $detail"
             } else {
                 results[id] = m.optJSONObject("result") ?: JSONObject()
                 pending[id] = true
@@ -436,6 +447,9 @@ class DshAcpClient(private val context: Context) {
      * 注意：ACP 不支持历史回放，所以恢复后聊天记录不会重放——S5 会显示为空，直到新消息。
      */
     suspend fun resumeSession(sessionIdArg: String): String? = withContext(Dispatchers.IO) {
+        // 同一会话重复恢复会被引擎拒（dsh-acp: "session is already active" → Invalid params）。
+        // App 侧只在恢复成功后才清消息，重复点击原地复用当前会话即可（v30.30）。
+        if (sessionIdArg == sessionId) return@withContext sessionIdArg
         val id = nextId++
         val params = JSONObject().put("sessionId", sessionIdArg)
         if (!send(JSONObject()

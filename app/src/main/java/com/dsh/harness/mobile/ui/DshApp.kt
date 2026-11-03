@@ -108,8 +108,23 @@ sealed interface Route {
     data object S49NewTermuxSession : Route  // Termux 新建终端会话
     // v30：SAF 存储目录桥（取代 v29 删掉的 NAS 假页面）
     data object S50StorageDir : Route        // SAF 外部存储目录桥
-    data object S51NasSync : Route           // NAS 连接（飞牛 fnOS WebDAV 同步）
-    data object S52NasAdd : Route             // 添加 NAS 连接（表单）
+    // v23 重编号：NAS 连接原占 S51/S52，而 v23 设计里 NAS = S34（群晖 WebDAV），
+    // 腾出 S51/S52 给「本地模型」集群（v23 S51–S53）。
+    data object S34NasSync : Route           // NAS 连接（群晖 WebDAV 同步）
+    data object S34NasAdd : Route             // 添加 NAS 连接（表单）
+    // —— 本地模型集群（v23 S51–S53）——
+    data object S51LocalModel : Route         // 本地模型（列表 / 运行时状态）
+    data object S52LocalModelDownload : Route // 本地模型 · 下载安装
+    data object S53LocalModelSettings : Route // 本地模型 · 运行设置
+    // —— 遥控电脑集群（v23 S54–S60）——
+    data object S54HostOverview : Route       // 任务（遥控电脑总览）
+    data object S55TaskMonitor : Route        // 任务监控（事件尾随）
+    data object S56Handoff : Route            // 任务转交
+    data object S57Queue : Route              // 任务队列
+    data object S58LockConflict : Route       // 工作区锁冲突
+    data object S59LocalRun : Route           // 本机运行（本地模型跑任务）
+    data object S60Takeover : Route           // 接管任务
+
 }
 
 /** 浮动层（Sheet），独立于路由栈。
@@ -556,6 +571,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         events = events,
                         onBack = { nav.backOrHome() },
                         running = busy,
+                        connected = connection == DshViewModel.ClientPhase.Ready,
                         contextUsage = contextUsage,
                         onCancel = { vm.cancel() },
                         onOpenMore = { sheet = SheetKind.More },
@@ -745,7 +761,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onSearch = { nav.go(Route.S45GlobalSearch) },
                         onTermux = { nav.go(Route.S27Termux) },
                         onStorage = { nav.go(Route.S50StorageDir) },
-                        onNas = { nav.go(Route.S51NasSync) },
+                        onNas = { nav.go(Route.S34NasSync) },
                     )
 
                     // —— API 密钥：写入 dsh 的 credentials 存储（$DSH_HOME/.credentials.yaml）——
@@ -991,14 +1007,57 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                         onPick = { safLauncher.launch(null) },
                     )
 
-                    Route.S51NasSync -> S51NasSync(
+                    Route.S34NasSync -> S34NasSync(
                         onBack = { nav.backOrHome() },
-                        onAdd = { nav.go(Route.S52NasAdd) },
+                        onAdd = { nav.go(Route.S34NasAdd) },
                     )
 
-                    Route.S52NasAdd -> S52NasAdd(
+                    Route.S34NasAdd -> S34NasAdd(
                         onBack = { nav.backOrHome() },
                         onSaved = { nav.backOrHome() },
+                    )
+
+                    // —— 本地模型集群（v23 S51–S53）——
+                    Route.S51LocalModel -> S51LocalModel(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    Route.S52LocalModelDownload -> S52LocalModelDownload(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    Route.S53LocalModelSettings -> S53LocalModelSettings(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    // —— 遥控电脑集群（v23 S54–S60）——
+                    Route.S54HostOverview -> S54HostOverview(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    Route.S55TaskMonitor -> S55TaskMonitor(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    Route.S56Handoff -> S56Handoff(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    Route.S57Queue -> S57Queue(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    Route.S58LockConflict -> S58LockConflict(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    Route.S59LocalRun -> S59LocalRun(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
+                    )
+                    Route.S60Takeover -> S60Takeover(
+                        onBack = { nav.backOrHome() },
+                        onGo = { nav.go(it) },
                     )
 
                 }
@@ -1017,7 +1076,7 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                     },
                     currentWorkspace = workspace,
                     nasConfigured = DshSync.isConfigured(ctx),
-                    onNas = { nav.go(Route.S51NasSync) },
+                    onNas = { nav.go(Route.S34NasSync) },
                     // v30.7：挂载/只读/远端路径全部取真实配置，不写死文案
                     nasMounted = DshSync.mountAsWorkspace(ctx),
                     nasReadOnly = DshSync.readOnlyNow(ctx),
@@ -1198,7 +1257,9 @@ fun DshApp(startRoute: Route = Route.S3Home) {
                 // v22 修订版：侧栏 Termux 行移除 → 改传 onExport（S46）；onTermux 不再由侧栏传
                 onExport = { drawerOpen = false; nav.go(Route.S46Export) },
                 onStorage = { drawerOpen = false; nav.go(Route.S50StorageDir) },
-                onNas = { drawerOpen = false; nav.go(Route.S51NasSync) },
+                onNas = { drawerOpen = false; nav.go(Route.S34NasSync) },
+                onLocalModel = { drawerOpen = false; nav.go(Route.S51LocalModel) },
+                onRemote = { drawerOpen = false; nav.go(Route.S54HostOverview) },
                 onArchived = { drawerOpen = false; nav.go(Route.S48Archived) },
                 // v30.23：长按会话 → 删除/归档（真删文件/移入 sessions-archive，回执走 toast）
                 onDeleteSession = { id ->

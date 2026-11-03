@@ -84,6 +84,11 @@ android {
         // ---- NAS 同步：SMB / SFTP 传输实现（S52 可实测连接）----
         implementation 'com.jcraft:jsch:0.1.55'             // SFTP（纯 Java SSH）
         implementation 'eu.agno3.jcifs:jcifs-ng:2.1.10'    // SMB/CIFS（含 slf4j/bcprov 传递依赖）
+
+        // ---- r152（官方对齐）：WebViewCompat.addWebMessageListener 需要 AndroidX WebKit 1.4.0+，
+        //   用于把桥接通道从「裸 addJavascriptInterface」升级为官方推荐的 dsh-bridge 消息通道。
+        //   最低要求 API 23，本 App 真机均满足；旧系统（API 21-22）降级回退到现有 addJavascriptInterface。
+        implementation 'androidx.webkit:webkit:1.12.1'
     }
 
     defaultConfig {

@@ -14,6 +14,16 @@
     <!-- TermuxApp DayNight NoActionBar theme. -->
     <style name="Theme.TermuxApp.DayNight.NoActionBar" parent="Theme.BaseActivity.DayNight.NoActionBar"/>
 
+    <!-- r163 方案 C：MainActivity 专属启动主题。
+         windowBackground = 品牌底色（浅 #F7F9FC / 深 #141B23，见 colors + values-night），
+         系统在进程创建、首帧渲染前画的窗口背景就是它 —— 点击图标后看到的第一眼
+         是品牌底色而不是刺眼白屏；随后 applyPalette() 会按真实主题重刷系统栏。 -->
+    <style name="Theme.DshSplash" parent="Theme.TermuxApp.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/dsh_boot_bg</item>
+        <item name="android:statusBarColor">@color/dsh_boot_bg</item>
+        <item name="android:navigationBarColor">@color/dsh_boot_bg</item>
+    </style>
+
 
     <!-- TermuxActivity DayNight NoActionBar theme. -->
     <style name="Theme.TermuxActivity.DayNight.NoActionBar" parent="Theme.TermuxApp.DayNight.NoActionBar">

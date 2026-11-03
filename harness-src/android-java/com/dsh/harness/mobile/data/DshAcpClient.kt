@@ -59,9 +59,29 @@ class DshAcpClient(private val context: Context) {
     private val _lastError = MutableStateFlow<String?>(null)
     val lastError: StateFlow<String?> = _lastError
 
+    /**
+     * 待用户审批的权限请求（ACP `session/request_permission`，设计稿 S7）。
+     * null = 当前没有待确认的操作。
+     *
+     * 协议实证（dsh-acp lib/index.js:1115-1137）：params 形如
+     *   { sessionId, toolCall:{toolCallId},
+     *     options:[ {optionId:"allow-once",name:"Allow once",kind:"allow_once"},
+     *               {optionId:"reject-once",name:"Reject",kind:"reject_once"} ] }
+     * 应答 `{outcome:{outcome:"selected",optionId}}` 或 `{outcome:"cancelled"}`。
+     * **没有 allow_always** —— 服务端只有一次性语义，UI 不能伪造"始终允许"。
+     */
+    private val _pendingPermission = MutableStateFlow<PendingPermission?>(null)
+    val pendingPermission: StateFlow<PendingPermission?> = _pendingPermission
+
     private var nextId = 1
     private var sessionId: String? = null
     private var process: Process? = null
+
+    /** v30.9：会话是否活着（供 UI 判断"下发 config 选项"是否可达） */
+    fun isActive(): Boolean = _phase.value == Phase.Ready && sessionId != null
+
+    /** v30.24：当前会话 id（无会话为 null）——App 侧会话标题注册表用 */
+    fun currentSessionId(): String? = sessionId
 
     @Volatile
     private var reader: BufferedReader? = null
@@ -236,8 +256,19 @@ class DshAcpClient(private val context: Context) {
             val id = m.getInt("id")
             if (m.has("error")) {
                 emit("✗ id=$id error=${m.get("error")}")
-                _lastError.value = m.optJSONObject("error")?.optString("message")
+                val eo = m.optJSONObject("error")
+                val msg = eo?.optString("message").takeUnless { it.isNullOrEmpty() }
                     ?: m.optString("error")
+                // dsh 把人类可读原因放在 error.data（message 常常只是干巴巴的
+                // "Invalid params"，真机 v30.30 实锉）——不透出 detail 用户无从下手
+                val data = eo?.opt("data")
+                val detail = when (data) {
+                    is String -> data
+                    is JSONObject -> if (data.length() == 0) "" else data.toString()
+                    null -> ""
+                    else -> data.toString()
+                }
+                _lastError.value = if (detail.isEmpty()) msg else "$msg · $detail"
             } else {
                 results[id] = m.optJSONObject("result") ?: JSONObject()
                 pending[id] = true
@@ -261,34 +292,69 @@ class DshAcpClient(private val context: Context) {
     /** 上层回调：把协议事件转成 UI 状态 */
     var onUpdate: ((JSONObject?) -> Unit)? = null
 
-    /** 权限请求：默认自动放行一次（真机上先不打断用户） */
+    /**
+     * 权限请求：**只记录，不自动应答**。
+     *
+     * v24 及以前这里扫 options 自动选 allow 直接回协议 —— 真机上
+     * 「点拒绝命令照样跑」，因为 UI 的三按钮和协议层完全脱节
+     * （v25 用户实测截图：S7 Sheet 三个按钮都只是关窗）。
+     * 现在只把请求存进 pendingPermission StateFlow 供 UI 弹 Sheet，用户选完再应答。
+     */
     private fun handlePermissionRequest(m: JSONObject) {
         val id = m.optInt("id", -1)
         val params = m.optJSONObject("params")
-        val options = params?.optJSONArray("options")
-        // 取第一个允许类选项
-        var chosen = ""
-        if (options != null) {
-            for (i in 0 until options.length()) {
-                val o = options.optJSONObject(i) ?: continue
-                val kind = o.optString("kind")
-                if (kind.contains("allow", true) || kind.contains("allow_once", true)) {
-                    chosen = o.optString("optionId")
-                    break
-                }
-            }
-            if (chosen.isEmpty() && options.length() > 0) {
-                chosen = options.optJSONObject(0)?.optString("optionId") ?: ""
+        val toolCallId = params?.optJSONObject("toolCall")?.optString("toolCallId").orEmpty()
+        val opts = ArrayList<PendingPermission.PermissionOption>()
+        params?.optJSONArray("options")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                opts.add(
+                    PendingPermission.PermissionOption(
+                        optionId = o.optString("optionId"),
+                        name = o.optString("name").ifEmpty { o.optString("kind") },
+                        kind = o.optString("kind"),
+                    )
+                )
             }
         }
-        emit("权限请求 → 自动选择 $chosen")
+        // 服务端在收到应答前不会再发第二个（request/response 语义），
+        // 但真出现就把旧的按取消应答掉，避免 dsh 侧那轮永久挂起。
+        _pendingPermission.value?.let { stale ->
+            emit("覆盖未应答的权限请求 id=${stale.requestId}（按取消应答）")
+            sendPermissionOutcome(stale.requestId, null)
+        }
+        _pendingPermission.value = PendingPermission(
+            requestId = id,
+            toolCallId = toolCallId,
+            options = opts,
+        )
+        emit("权限请求 toolCall=$toolCallId options=${opts.map { it.optionId }}（等待用户）")
+    }
+
+    /**
+     * 用户对权限请求的应答。optionId = null 表示取消（拖走 Sheet / 返回键），
+     * 协议层按 `outcome:"cancelled"` 回，dsh 侧视为拒绝。
+     */
+    fun respondPermission(optionId: String?) {
+        val p = _pendingPermission.value ?: return
+        _pendingPermission.value = null
+        sendPermissionOutcome(p.requestId, optionId)
+        emit("权限应答 → ${optionId ?: "cancelled"}")
+    }
+
+    private fun sendPermissionOutcome(requestId: Int, optionId: String?) {
+        val outcome = JSONObject()
+        if (optionId == null) {
+            outcome.put("outcome", "cancelled")
+        } else {
+            outcome.put("outcome", "selected")
+            outcome.put("optionId", optionId)
+        }
         send(
             JSONObject()
                 .put("jsonrpc", "2.0")
-                .put("id", id)
-                .put("result", JSONObject().put("outcome", JSONObject()
-                    .put("outcome", "selected")
-                    .put("optionId", chosen)))
+                .put("id", requestId)
+                .put("result", JSONObject().put("outcome", outcome))
         )
     }
 
@@ -375,6 +441,40 @@ class DshAcpClient(private val context: Context) {
         null
     }
 
+    /**
+     * 恢复（打开）已存在的持久会话：session/resume（ACP 已注册，但本客户端此前没封装）。
+     * 恢复后该会话成为当前会话，后续 prompt 续写到它上面；configOptions 一并拉回（供 S9）。
+     * 注意：ACP 不支持历史回放，所以恢复后聊天记录不会重放——S5 会显示为空，直到新消息。
+     */
+    suspend fun resumeSession(sessionIdArg: String): String? = withContext(Dispatchers.IO) {
+        // 同一会话重复恢复会被引擎拒（dsh-acp: "session is already active" → Invalid params）。
+        // App 侧只在恢复成功后才清消息，重复点击原地复用当前会话即可（v30.30）。
+        if (sessionIdArg == sessionId) return@withContext sessionIdArg
+        val id = nextId++
+        val params = JSONObject().put("sessionId", sessionIdArg)
+        if (!send(JSONObject()
+                .put("jsonrpc", "2.0").put("id", id)
+                .put("method", "session/resume").put("params", params))) return@withContext null
+        val deadline = System.currentTimeMillis() + HANDSHAKE_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            results[id]?.let { rsp ->
+                val sid = rsp.optString("sessionId")
+                    .ifEmpty { rsp.optJSONObject("session")?.optString("sessionId") ?: "" }
+                if (sid.isNotEmpty()) {
+                    sessionId = sid
+                    lastConfigOptions = rsp.optJSONArray("configOptions") ?: JSONArray()
+                    emit("会话已恢复：$sid")
+                    return@withContext sid
+                }
+            }
+            delay(30)
+        }
+        // 兜底：引擎已收到 resume、只是回包形状未知 → 仍切到目标会话，避免功能静默失效
+        sessionId = sessionIdArg
+        emit("会话已恢复（回包超时，按传入 id 切换）：$sessionIdArg")
+        sessionIdArg
+    }
+
     /** 中断当前提示词（协议：session/cancel）。这是唯一真实的"停止"路径。 */
     suspend fun cancel(): Boolean = withContext(Dispatchers.IO) {
         val sid = sessionId ?: return@withContext false
@@ -416,6 +516,8 @@ class DshAcpClient(private val context: Context) {
         try { process?.destroy() } catch (_: Exception) {}
         process = null
         sessionId = null
+        // 进程没了，挂起的审批也不可能再有应答 → 清掉，别让 UI 卡在一张死 Sheet 上
+        _pendingPermission.value = null
         _phase.value = Phase.Idle
     }
 
@@ -436,5 +538,25 @@ class DshAcpClient(private val context: Context) {
         m.invoke(p).toString()
     } catch (_: Throwable) {
         "?"
+    }
+
+    /**
+     * 一条待审批的权限请求（ACP `session/request_permission` 的解析结果）。
+     *
+     * 协议实证见 [handlePermissionRequest] 的注释：options 在真实 dsh 里固定是
+     * allow-once / reject-once 两个**一次性**选项，所以设计稿的
+     * 「本会话始终允许此类操作」没有协议对应物 —— S7 的按钮必须按 options
+     * 渲染，而不是按设计稿硬编码三个。
+     */
+    data class PendingPermission(
+        val requestId: Int,
+        val toolCallId: String,
+        val options: List<PermissionOption>,
+    ) {
+        data class PermissionOption(
+            val optionId: String,
+            val name: String,
+            val kind: String,
+        )
     }
 }

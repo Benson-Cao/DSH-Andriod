@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- r163 方案 C：Android 12+ 系统级 SplashScreen。
+         点击桌面图标后、Activity 进程起来前，系统画的 splash 用品牌底色 +
+         App 图标（adaptive icon 的鲸鱼前景），与首帧 windowBackground 同色，
+         消灭"点图标 → 白屏"的系统级空窗。compileSdk=36，v31 属性可安全编译。 -->
+    <style name="Theme.DshSplash" parent="@style/Theme.DshSplash">
+        <item name="android:windowSplashScreenBackground">@color/dsh_boot_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

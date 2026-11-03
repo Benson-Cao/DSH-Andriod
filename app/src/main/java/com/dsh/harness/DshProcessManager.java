@@ -94,11 +94,28 @@ public final class DshProcessManager {
      * 端口打开 ≠ 服务可用（实测：端口已开但 frontend-static 还没注册 fallback，
      * 此时任何路径都是 404 空响应体）。启动与等待拆开也让启动更快。
      */
+    /**
+     * 拉起 dsh 服务（布尔版，向后兼容 {@link DshService} 等调用方）。
+     * 只负责启动，不等待就绪；失败返回 false（异常被吞，日志可见）。
+     */
     public static boolean start(Context ctx) {
+        try {
+            running = launch(ctx);
+            return running != null;
+        } catch (Exception e) {
+            Log.e(TAG, "启动 dsh 失败", e);
+            return false;
+        }
+    }
+
+    /**
+     * r152（官方对齐）：以 {@link RuntimeProvider} 接口形式拉起 dsh 引擎进程。
+     * 直接返回进程句柄（调用方负责保活 / 销毁），失败抛异常由上层兜底。
+     */
+    public static Process launch(Context ctx) throws Exception {
         File launcher = new File(DshBootstrap.prefix(ctx), "bin/dsh-web.sh");
         if (!launcher.exists()) {
-            Log.e(TAG, "启动脚本不存在，请先跑 DshBootstrap.setupIfNeeded()");
-            return false;
+            throw new IllegalStateException("启动脚本不存在，请先跑 DshBootstrap.setupIfNeeded()");
         }
         // 日志目录必须先建好，否则重定向失败、什么都看不到
         File homeDir = DshBootstrap.home(ctx);
@@ -111,27 +128,22 @@ public final class DshProcessManager {
         // 不用 setsid/nohup（bundle 里没有 coreutils）。
         // 关键：不能用 "cmd &" + waitFor —— Runtime.exec 的子进程会随调用方结束被回收。
         // 改成直接 ProcessBuilder 启动 bash 脚本本体，进程脱离调用栈继续活着。
-        try {
-            String bash = new File(DshBootstrap.prefix(ctx), "bin/bash").getAbsolutePath();
-            String[] env = ShellRunner.buildEnv(ctx);
-            ProcessBuilder pb = new ProcessBuilder(bash, launcher.getAbsolutePath());
-            pb.directory(homeDir);
-            pb.environment().clear();
-            for (String kv : env) {
-                int i = kv.indexOf('=');
-                if (i > 0) pb.environment().put(kv.substring(0, i), kv.substring(i + 1));
-            }
-            pb.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
-            pb.redirectError(ProcessBuilder.Redirect.appendTo(logFile));
-            final long scanStart = logFile.exists() ? logFile.length() : 0;
-            running = pb.start();
-            Log.i(TAG, "bash 进程已启动");
-            startStateScan(ctx, scanStart);   // 增量扫描 dsh-web.log，解析 DSH_STATE: 行回调 UI
-        } catch (Exception e) {
-            Log.e(TAG, "启动 bash 失败", e);
-            return false;
+        String bash = new File(DshBootstrap.prefix(ctx), "bin/bash").getAbsolutePath();
+        String[] env = ShellRunner.buildEnv(ctx);
+        ProcessBuilder pb = new ProcessBuilder(bash, launcher.getAbsolutePath());
+        pb.directory(homeDir);
+        pb.environment().clear();
+        for (String kv : env) {
+            int i = kv.indexOf('=');
+            if (i > 0) pb.environment().put(kv.substring(0, i), kv.substring(i + 1));
         }
-        return true;
+        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
+        pb.redirectError(ProcessBuilder.Redirect.appendTo(logFile));
+        final long scanStart = logFile.exists() ? logFile.length() : 0;
+        running = pb.start();
+        Log.i(TAG, "bash 进程已启动");
+        startStateScan(ctx, scanStart);   // 增量扫描 dsh-web.log，解析 DSH_STATE: 行回调 UI
+        return running;
     }
 
     private static Process running = null;

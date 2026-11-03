@@ -192,8 +192,9 @@ public class DshWebViewClient extends WebViewClient {
                 Log.i("DshWebViewClient", "[dsh] clearHistory @ first dsh load: " + url);
             } catch (Throwable ignored) { }
         }
-        // dsh 的 UI 是桌面优先布局，手机上必须先补一刀（限宽侧栏 + 自动折叠）
-        MobileTuning.apply(view);
+        // r151：官方 dsh 0.2.x web 已自带移动端响应式布局（侧栏抽屉 / 窄屏自适应），
+        // 不再注入针对 0.1.x 桌面优先布局的手机适配外壳（assets/dsh/mobile.css|js 等）。
+        // 保留下面的主题探测（已对齐到 0.2.x 的主题信号）。
 
         // r79：启动页深色模式的第二段 —— 页面真正加载完，**此时才读得到 dsh 的主题**。
         // 启动页阶段只能按系统 uiMode 猜（见 DshPalette 注释），若用户是在 dsh 里
@@ -205,6 +206,17 @@ public class DshWebViewClient extends WebViewClient {
         // 现在改成**最多重试 5 次、间隔递增**（1s/2s/4s/8s/12s），
         // 覆盖 SPA 首屏渲染的不确定时长。
         probeTheme(view, 0);
+
+        // r152（官方对齐）：注入移动端布局修复（dvh 兜底 / 安全区 / 防横向溢出）。
+        // 只做结构性调整，颜色一律引用 dsh 官方 CSS 变量、不写死字面量、不覆盖主题。
+        // 仅对本地 dsh 页注入，幂等（脚本内有 id 去重）。
+        // v34：只注入「官方外壳」最小脚本（assets/dsh/official-bridge.js）——
+        //   设置入口拦截（→ 原生 Compose 设置页）+ 返回状态上报。
+        //   不再注入 mobile.css / mobile.js / market*.css：那些自定义顶栏、抽屉、
+        //   行样式会把官方页面改成另一套 UI（用户要求首页与官方 WebView 完全一致）。
+        if (url != null && DshOrigin.isLocalUrl(url)) {
+            com.dsh.harness.webview.OfficialShell.inject(view);
+        }
     }
 
     /** 探测 dsh 页面主题（带退避重试）。attempt 从 0 开始。 */
@@ -219,20 +231,13 @@ public class DshWebViewClient extends WebViewClient {
                 @Override public void run() {
                     try {
                         view.evaluateJavascript(
-                                // ⚠️ r79 真机调试（第二轮）修正：**直接读 dsh 的权威判定结果**，
-                                //   不要自己重算 body 背景色亮度。
-                                //   原因：真机上出现过「回读=light 但页面明显是深色」的矛盾 ——
-                                //   因为 dsh 的主题不一定落在 body 背景上（可能是内层容器或 CSS 变量），
-                                //   自己算出来的结论与页面实际观感不一致，还把错误值落了盘。
-                                //   而 `documentElement.classList.contains('dsh-dark')`
-                                //   正是 mobile.js 的 detectDark() 算完后写下的**最终结论**，
-                                //   读它 = 直接复用页面的判定，零分歧。
-                                // ① 权威：mobile.js 的 detectDark() 算完写下的结论
-                                // ② dsh 强制浅色标记
-                                // ⚠️ ③ 之后全是**猜测** → 一律加 guess: 前缀，
-                                //    Java 侧见到guess: 就丢弃结果、跟随系统。
-                                //    （r79 真机：早期版本把猜测当权威，错误落盘，
-                                //      导致深色系统下启动页画成浅色 —— 闪瞎眼）
+                                // 0.2.x 原生暗色主题探测（不再依赖已移除的 mobile.js 注入层）：
+                                //   dsh 官方 CSS 用 `body[data-ds-dark-theme]` 切换深色变量，这是权威信号；
+                                //   同时兜底 prefers-color-scheme（0.2.x 默认跟随系统暗色）。
+                                //   直接读这些信号 → 首探即返回确定结论，避免旧逻辑在 SPA 未渲染时
+                                //   误判并退避重试最多 ~46s 才跟随系统（深色系统下启动页闪白条）。
+                                //   data-ds-dark-theme 可能落在 body 也可能落在 html（不同构建），两者都查；
+                                //   兜底 matchMedia 立即可得，与 0.2.x 的系统暗色渲染保持一致。
                                 "(function(){try{"
                                 + "var h=document.documentElement,b=document.body;"
                                 + "if(!h||!b)return '';"
@@ -246,10 +251,13 @@ public class DshWebViewClient extends WebViewClient {
                                 //   **避免双重应用**（页面已经用 data-* 应用过了），
                                 //   不是"改成浅色"。
                                 //   我曾误判为浅色 → 真机上深色系统却画出浅色启动页。
-                                + "if(b.hasAttribute('data-ds-dark-theme'))return 'dark';"
-                                + "if(h.classList.contains('dsh-dark'))return 'dark';"
-                                + "return 'guess:none';"
-                                + "}catch(e){return 'guess:err'}})()",
+                                + "var dark=b.hasAttribute('data-ds-dark-theme')"
+                                + "||h.hasAttribute('data-ds-dark-theme')"
+                                + "||h.classList.contains('dsh-dark')"
+                                + "||h.classList.contains('dark')"
+                                + "||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);"
+                                + "return dark?'dark':'light';"
+                                + "}catch(e){return '';}})()",
                                 new android.webkit.ValueCallback<String>() {
                                     @Override public void onReceiveValue(String value) {
                                         // ⚠️ **每条分支都打日志**：静默失败是最难查的一类问题，

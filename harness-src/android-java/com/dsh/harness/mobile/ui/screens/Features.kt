@@ -1,8 +1,15 @@
 package com.dsh.harness.mobile.ui.screens
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -17,10 +24,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.dsh.harness.SafConfig
+import com.dsh.harness.SafTree
 import com.dsh.harness.mobile.ui.components.*
 import com.dsh.harness.mobile.ui.theme.*
 
@@ -31,6 +45,25 @@ import com.dsh.harness.mobile.ui.theme.*
  * 布局：标题 6% ｜ 模式 2×2 网格 30%(每卡 88px) ｜ 权限三段 8% ｜ 说明 5%
  *      ｜ 模型列表 18% ｜ 思考强度 8% ｜ 开始按钮 7%
  *   "模式卡文字两行截断，不撑破网格"
+ *
+ * ⚠️ **v30.9 三处诚实化修正（拍板结论，均有 dsh 源码依据）**：
+ * 1. **模式卡从"可选"改为"只读展示当前 preset"**：dsh 的 preset 是
+ *    standard/ptc/minimal/cordis 四个（`dsh-agent-presets/presets/` 下各目录的 `preset.yml` 的
+ *    name 即「标准/PTC/极简/创造」），但 **ACP 没有注册 `session/set_mode`**
+ *    （dsh-acp/lib/index.js 只注册 new/list/resume/close/setConfigOption/prompt/cancel），
+ *    所以模式**无法在会话内切换**，只能由 Profile 装配决定。画成 4 张可点卡片
+ *    等于点了没反应 → 改为不可点的只读态 + 说明。
+ * 2. **「极简」的描述被设计稿写歪了**：设计稿写"只给结果，不展示过程"，那是"输出详细度"；
+ *    真语义是 minimal preset = "仅提供持久 shell 的单工具编码 Agent"
+ *    （`presets/minimal/preset.yml`）。已改为真实描述。
+ * 3. **思考强度档位统一为真实四档**：DeepSeek 硬校验只有 off/low/high/max
+ *    （`dsh-llm-deepseek/lib/index.js` reasoningEffort()，其他值抛
+ *    UNSUPPORTED_REASONING_EFFORT），且**每个模型可不同**（由模型自己的 reasoning.efforts 决定）。
+ *    原「低/中/高」里的"中"不是真档位、且缺 Max → 改为按 [thinkingLevels] 动态渲染，
+ *    拿不到真实列表时回落四档。
+ * 4. **权限档位中英混用 → 统一中文**，并说明真实机制：ACP 只有
+ *    `session/request_permission`（allow-once / reject-once）**逐个审批**，
+ *    没有"三档权限"概念；这三档是预设声明的能力边界，不是 ACP 能力。
  */
 @Composable
 fun BoxScope.S9NewSessionSheet(
@@ -40,20 +73,32 @@ fun BoxScope.S9NewSessionSheet(
     /** 来自 ACP session/new 返回的真实模型目录；为空时退回设计稿演示项 */
     liveModels: List<com.dsh.harness.mobile.data.DshViewModel.ModelOption> = emptyList(),
     onPickModel: (String) -> Unit = {},
+    /** v30.9：当前真实 preset（dsh 侧装配结果），只读展示 */
+    currentPreset: String = "standard",
+    /** v30.9：当前模型真实支持的思考强度档位（ACP configOptions → category=="thought_level"） */
+    thinkingLevels: List<String> = listOf("off", "low", "high", "max"),
+    thinkingLevelsKnown: Boolean = false,
+    onPickThinking: (String) -> Unit = {},
 ) {
     val c = DshTheme.colors
-    var mode by remember { mutableStateOf("标准") }
     var perm by remember { mutableStateOf(1) }
     var model by remember { mutableStateOf(0) }
-    var think by remember { mutableStateOf(1) }
 
-    val modes = listOf(
-        Triple("标准", "按需规划，过程与结论都给", DshIcons.Build),
-        Triple("PTC", "程序化思考，复杂计算更稳", DshIcons.Psychology),
-        Triple("极简", "只给结果，不展示过程", DshIcons.FilterNone),
-        Triple("创造", "发散探索，给多个方向", DshIcons.AutoAwesome),
+    // v30.9：四个 preset 是 dsh 真值（dsh-agent-presets/presets/*/preset.yml）。
+    // **只读展示，不可点** —— ACP 未提供 session/set_mode，选了也不会生效。
+    val presets = listOf(
+        S9Preset("standard", "标准模式", "功能完整的编码 Agent：文件编辑、Shell、检索、Skills、计划、子代理", DshIcons.Build),
+        S9Preset("ptc", "PTC 模式", "用一段 TypeScript 程序组合多步操作，默认不提供 workflow", DshIcons.Psychology),
+        S9Preset("minimal", "极简模式", "仅提供持久 Shell 的单工具编码 Agent", DshIcons.FilterNone),
+        S9Preset("cordis", "创造模式", "用于创建自定义 Agent preset，含运行时检查与插件实验", DshIcons.AutoAwesome),
     )
-    val perms = listOf("Read Only", "Workspace Write", "Full Access")
+    // v30.9：权限档位统一中文。真实机制是越界操作逐个弹审批（session/request_permission），
+    // 这三档是预设声明的能力边界，不是 ACP 的权限开关。
+    // v22 修订版把权限档位文案从英文改成中文三态，与 S9 权限 Sheet 的原文一致：
+    //   仅可查看 / 工作区内修改 / 完全权限
+    // （我们 v30.9 拍板时用的是"只读/工作区写入/完整访问"，设计稿这版又细化了一档
+    //   语义——"工作区内修改"比"工作区写入"更准确：强调的是**范围**而非动作。）
+    val perms = listOf("仅可查看", "工作区内修改", "完全权限")
     // 设计稿的演示项；ACP 通了以后用真实目录替换
     val models = if (liveModels.isNotEmpty()) {
         liveModels.map { it.name to (it.value to it.group) }
@@ -64,7 +109,8 @@ fun BoxScope.S9NewSessionSheet(
             "V4-Pro Max" to ("" to "deepseek-official"),
         )
     }
-    val thinks = listOf("低", "中", "高")
+    // v30.9：真实四档（off/low/high/max），不再用设计稿的「低/中/高」。
+    val thinks = thinkingLevels.map { lv -> thinkingLabel(lv) }
 
     DshSheet(
         visible = visible,
@@ -74,28 +120,40 @@ fun BoxScope.S9NewSessionSheet(
         content = {
             // —— 模式 2×2，每卡 88 高 ——
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                modes.chunked(2).forEach { row ->
+                presets.chunked(2).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { (name, desc, icon) ->
+                        row.forEach { preset ->
+                            val (id, name, desc, icon) = preset
                             ModeCard(
                                 name = name,
                                 desc = desc,
                                 icon = icon,
-                                selected = mode == name,
+                                selected = currentPreset == id,
                                 modifier = Modifier.weight(1f),
-                            ) { mode = name }
+                                onClick = null,
+                            )
                         }
                     }
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "模式（preset）由 Profile 装配决定，当前为「" +
+                    (presets.firstOrNull { it.id == currentPreset }?.name ?: currentPreset) +
+                    "」；ACP 协议未提供会话内切换 preset 的能力，因此这里只读。",
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             Spacer(Modifier.height(14.dp))
             DshSecTitle("权限档位", Modifier.padding(top = 0.dp))
             DshSeg(perms, perm) { perm = it }
             Spacer(Modifier.height(8.dp))
             Text(
-                "权限决定 Agent 能在哪些地方读写与执行命令；越界操作会先弹审批。",
-                style = Type.meta.copy(lineHeight = 17.6.sp),
+                "这三档是预设声明的能力边界，不是 ACP 的权限开关；协议层面的真实机制是越界操作" +
+                    "逐个弹审批（允许一次 / 拒绝），由你在会话里逐次决定。",
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
                 color = c.ink3,
             )
 
@@ -133,15 +191,39 @@ fun BoxScope.S9NewSessionSheet(
 
             Spacer(Modifier.height(14.dp))
             DshSecTitle("思考强度", Modifier.padding(top = 0.dp))
-            DshSeg(thinks, think) { think = it }
+            // v30.9：真四档 + 选中即回传（VM.selectThinking → session/set_config_option）。
+            // 切换模型时档位可能变（每模型 reasoning.efforts 不同），所以 remember 带 keys 重置。
+            var think by remember(currentPreset, thinkingLevels) {
+                mutableStateOf(thinkingLevels.indexOf("high").coerceAtLeast(0))
+            }
+            DshSeg(thinks, think) { i ->
+                think = i
+                onPickThinking(thinkingLevels[i])
+            }
+            Text(
+                if (thinkingLevelsKnown) {
+                    "档位来自当前模型的真实声明（off / low / high / max 四档，" +
+                        "不同模型可不同）；选中后立即对后续轮次生效。"
+                } else {
+                    "未能从模型读到真实档位，暂按 off / low / high / max 四档显示；" +
+                        "实际支持范围以模型为准。"
+                },
+                style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                color = c.ink3,
+                modifier = Modifier.fillMaxWidth(),
+            )
         },
         footer = {
-            DshBtn("开始会话", onClick = { onStart(mode) })
+            DshBtn("开始会话", onClick = { onStart(currentPreset) })
         },
     )
 }
 
-/** 模式卡：设计稿 166×88，文字两行截断 */
+/**
+ * 模式卡：设计稿 166×88，文字两行截断。
+ * v30.9：[onClick] 传 null 表示**只读态**（当前 preset 不可切换，ACP 无 session/set_mode）：
+ * 去掉 clickable、去掉阴影/按压反馈，避免做成"看起来能点其实点了没反应"。
+ */
 @Composable
 private fun ModeCard(
     name: String,
@@ -149,7 +231,7 @@ private fun ModeCard(
     icon: ImageVector,
     selected: Boolean,
     modifier: Modifier = Modifier,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
 ) {
     val c = DshTheme.colors
     Column(
@@ -162,7 +244,7 @@ private fun ModeCard(
                 if (selected) c.brand else c.line,
                 RoundedCornerShape(Radius.xl),
             )
-            .clickable { onClick() }
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -181,6 +263,28 @@ private fun ModeCard(
         Spacer(Modifier.height(6.dp))
         Text(desc, style = Type.meta.copy(lineHeight = 15.sp), color = c.ink3, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
+}
+
+/** v30.9：S9 的一个 preset 条目（dsh 真值，见文件头注释）。 */
+private data class S9Preset(
+    val id: String,
+    val name: String,
+    val desc: String,
+    val icon: ImageVector,
+)
+
+/**
+ * v30.9：思考强度档位的中文显示名。
+ * 真值是 ACP reasoning_effort 的 off / low / high / max（DeepSeek 硬校验这四档，
+ * 见 dsh-llm-deepseek/lib/index.js reasoningEffort()）；"medium" 之类的值不是真档位。
+ */
+internal fun thinkingLabel(level: String): String = when (level) {
+    "off" -> "关"
+    "low" -> "低"
+    "high" -> "高"
+    "max" -> "最高"
+    "provider-default" -> "跟随模型"
+    else -> level
 }
 
 // ============================ S10 斜杠指令面板 ============================
@@ -294,14 +398,38 @@ fun S11Workspace(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onOpenDrawer: () -> Unit,
+    /** v30：真实工作区 cwd（来自 DshViewModel.workspace）；null = 还没选 */
+    workspace: String? = null,
     initialTab: Int = 0,
-    /** 将来接上文件读取后从这里传入；现在恒为空 */
-    files: List<FileRow> = emptyList(),
-    diffs: List<DiffLine> = emptyList(),
-    artifacts: List<FileRow> = emptyList(),
+    /** v20：顶栏放大镜 → S45 全局搜索 */
+    onSearch: () -> Unit = {},
+    /** v20：工作区横滑条末尾 add → S41 选择工作区目录 */
+    onAddWorkspace: () -> Unit = {},
+    /** v30.8：Git 页签 → S47 提交流程（S47 此前是孤儿路由，无任何入口） */
+    onOpenGitCommit: () -> Unit = {},
+    /** v30.9：顶栏「更多」→ 归档会话 S48（此前是空回调） */
+    onOpenArchived: () -> Unit = {},
 ) {
     val c = DshTheme.colors
+    val ctx = LocalContext.current.applicationContext
     var tab by remember { mutableStateOf(initialTab) }
+
+    // v30：真实读取 SAF 授权态，并拉取已授权目录下的真实文件列表（IO 放到后台）
+    val safOn = remember { SafConfig.isConfigured(ctx) }
+    var safEntries by remember { mutableStateOf<List<SafTree.Entry>>(emptyList()) }
+    // v22 修订版：骨架屏的开关。safOn 且列表还没回来 = 正在后台拉取。
+    var safLoading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(safOn) {
+        if (safOn) {
+            safLoading = true
+            safEntries = withContext(Dispatchers.IO) { SafTree.list(ctx, "") }
+            safLoading = false
+        } else {
+            safEntries = emptyList()
+            safLoading = false
+        }
+    }
 
     DshScreen(modifier) {
         DshNavBar(
@@ -311,26 +439,34 @@ fun S11Workspace(
             onBack = onBack,
             title = "工作区",
             actions = {
-                DshIBtn(DshIcons.MoreVert, "更多", onClick = {})
+                DshIBtn(DshIcons.Search, "搜索", onClick = onSearch)
+                DshIBtn(DshIcons.MoreVert, "更多", onClick = onOpenArchived)
                 DshIBtn(DshIcons.Menu, "侧边栏", onClick = onOpenDrawer)
             },
         )
 
-        // 工作区横滑条
+        // 工作区横滑条：真实只有「当前工作区」一个（来自 VM 的 cwd）；
+        // 未选择时给一个入口 chip 引导去 S41 选目录。外部存储若已授权也单列。
         Row(
             Modifier
                 .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = Space.lg, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            // 设计稿 .ws-pill{max-width:150px}：不能用 weight(1f) 撑满，
-            // 否则胶囊会横贯整屏（真机复现）。用 widthIn 上限 + Spacer 占位。
-            DshWsPill(
-                label = "默认工作区",
-                icon = DshIcons.FolderOpen,
-                modifier = Modifier.widthIn(max = 170.dp),
-            ) {}
-            DshChip("3 项变更", tone = ChipTone.Warn, mini = true)
+            if (workspace != null) {
+                DshChip(workspace.substringAfterLast('/'), tone = ChipTone.Brand)
+            } else {
+                DshChip("选择工作区", tone = ChipTone.Neutral, onClick = onAddWorkspace)
+            }
+            if (safOn) {
+                DshChip(
+                    "外部存储 · " + SafConfig.displayName(ctx),
+                    icon = DshIcons.FolderOpen,
+                    tone = ChipTone.Ok,
+                )
+            }
+            DshChip("", icon = DshIcons.Add, onClick = onAddWorkspace)
         }
 
         Column(Modifier.padding(horizontal = Space.lg).padding(top = 10.dp)) {
@@ -346,122 +482,97 @@ fun S11Workspace(
                 .padding(top = 10.dp),
         ) {
             when (tab) {
-                0 -> if (files.isEmpty()) {
-                    DshEmpty("工作区里还没有文件", icon = DshIcons.FolderOpen)
-                } else Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.card)
-                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
-                ) {
-                    files.forEachIndexed { i, f ->
-                        DshMRow(title = f.name, subtitle = f.meta, icon = f.icon, iconTone = f.tone)
-                        if (i != files.lastIndex) DshDivider()
-                    }
-                }
-
-                1 -> {
-                    // —— Diff 卡：头 + 代码行 + 脚注 ——
-                    Column(
+                // —— 文件：真实优先（SAF 已授权则列真实目录），否则诚实空态 ——
+                0 -> when {
+                    safOn && safEntries.isNotEmpty() -> Column(
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(Radius.xl))
                             .background(c.card)
                             .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
                     ) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .background(c.line2)
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("aggregate.py", style = Type.mono, color = c.ink, modifier = Modifier.weight(1f))
-                            Text("M", style = Type.meta.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = c.warn)
-                            Spacer(Modifier.width(8.dp))
-                            Text("+42 −8", style = Type.meta, color = c.ink3)
+                        safEntries.forEachIndexed { i, e ->
+                            DshMRow(
+                                title = e.name,
+                                subtitle = if (e.isDir) "文件夹" else fmtSize(e.size),
+                                icon = if (e.isDir) DshIcons.FolderOpen else DshIcons.Article,
+                                iconTone = if (e.isDir) ChipTone.Brand else ChipTone.Neutral,
+                            )
+                            if (i != safEntries.lastIndex) DshDivider()
                         }
-                        Column(Modifier.padding(vertical = 6.dp)) {
-                            diffs.forEach { d ->
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .background(
-                                            when (d.mark) {
-                                                "+" -> c.okSoft()
-                                                "-" -> c.dangerSoft()
-                                                else -> Color.Transparent
-                                            }
-                                        )
-                                        .padding(horizontal = 10.dp, vertical = 2.dp),
-                                ) {
-                                    // 变更标记定宽 26
-                                    Text(
-                                        d.mark,
-                                        style = Type.mono,
-                                        color = when (d.mark) {
-                                            "+" -> c.ok
-                                            "-" -> c.danger
-                                            else -> c.ink3
-                                        },
-                                        modifier = Modifier.width(16.dp),
-                                    )
-                                    Text(
-                                        d.no.toString(),
-                                        style = Type.mono.copy(fontSize = 10.sp),
-                                        color = c.ink3,
-                                        modifier = Modifier.width(26.dp),
-                                    )
-                                    Text(d.text, style = Type.mono, color = c.ink2)
-                                }
-                            }
-                        }
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .topLine(c.line)
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            DshBtn("暂存", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = {})
-                            DshBtn("丢弃", small = true, tone = BtnTone.Ghost, modifier = Modifier.weight(1f), onClick = {})
+                    }
+                    workspace != null -> Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.xl))
+                            .background(c.card)
+                            .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
+                    ) {
+                        DshMRow(
+                            title = workspace.substringAfterLast('/'),
+                            subtitle = workspace,
+                            icon = DshIcons.FolderOpen,
+                            iconTone = ChipTone.Brand,
+                        )
+                    }
+                    // v22 修订版：空工作区卡（设计稿新增，含「上传文件 / 新建」两个入口）
+                    // + 骨架屏加载态。⚠️ 设计稿把这两块画成了"示例卡"，我们按它本来的用途实现：
+                    //   骨架屏 = safOn 已授权但目录还在后台拉的**真实 loading 态**；
+                    //   空工作区卡 = 真的没有文件时的空态（含上传入口）。
+                    // 「新建」按钮置灰：本 App 没有"在工作区里新建文件"的写入口，
+                    // 画成能点却没反应违反项目的诚实原则。
+                    else -> Column {
+                        if (safLoading) {
+                            S11Skeleton()
+                        } else {
+                            S11EmptyWorkspace(
+                                onUpload = onAddWorkspace,
+                                onNew = null,
+                            )
                         }
                     }
                 }
 
-                2 -> Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(Radius.xl))
-                        .background(c.card)
-                        .border(1.dp, c.line, RoundedCornerShape(Radius.xl)),
+                // —— Git 变更：本 harness 无 Git 后端，诚实空态 ——
+                // v30.8：给出唯一入口 → S47 提交流程（该页自带"示例数据"标注）
+                1 -> Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.Center,
                 ) {
-                    ArtifactRow("Q3数据汇总.pptx", "9 页 · 1.4 MB", DshIcons.Slideshow, ChipTone.Brand)
-                    DshDivider()
-                    ArtifactRow("charts/dept_rank.png", "1280×720 · 218 KB", DshIcons.Image, ChipTone.Purple)
-                    DshDivider()
-                    ArtifactRow("reports/q3_by_dept.csv", "8 行 × 14 列 · 12 KB", DshIcons.TableChart, ChipTone.Ok)
+                    DshEmpty("暂无 Git 变更记录", icon = DshIcons.Sync)
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "本机运行环境未内置 Git，无法读取真实变更。",
+                        style = Type.meta.copy(fontSize = 10.5.sp, lineHeight = 16.sp),
+                        color = c.ink3,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    DshBtn(
+                        "查看提交流程",
+                        small = true,
+                        tone = BtnTone.Ghost,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onOpenGitCommit,
+                    )
                 }
+
+                // —— 产物：无真实产物数据源，诚实空态 ——
+                2 -> DshEmpty("还没有生成产物", icon = DshIcons.Slideshow)
             }
             Spacer(Modifier.height(8.dp))
         }
     }
 }
 
-data class FileRow(val name: String, val meta: String, val icon: ImageVector, val tone: ChipTone)
-data class DiffLine(val mark: String, val no: Int, val text: String)
-
-@Composable
-private fun ArtifactRow(name: String, meta: String, icon: ImageVector, tone: ChipTone) {
-    DshMRow(
-        title = name,
-        subtitle = meta,
-        icon = icon,
-        iconTone = tone,
-        trailing = { DshChip("打开", tone = tone, mini = true) },
-        onClick = {},
-    )
+/** 字节数 → 人类可读（用于 SAF 文件列表） */
+private fun fmtSize(bytes: Long): String {
+    if (bytes <= 0) return "—"
+    val units = listOf("B", "KB", "MB", "GB")
+    var v = bytes.toDouble()
+    var u = 0
+    while (v >= 1024 && u < units.lastIndex) { v /= 1024; u++ }
+    return "%.1f %s".format(v, units[u])
 }
 
 // ============================ S13 自动化任务 ============================
@@ -478,6 +589,8 @@ fun S13Automation(
     onBack: () -> Unit,
     /** 将来接上任务调度后传入；空列表走空态，不用假任务冒充 */
     tasks: List<AutomationTask> = emptyList(),
+    /** v20：顶栏加号 → S40 新建自动化任务 */
+    onNewTask: () -> Unit = {},
 ) {
     val c = DshTheme.colors
 
@@ -486,7 +599,7 @@ fun S13Automation(
             onBack = onBack,
             title = "自动化任务",
             stacked = true,
-            actions = { DshIBtn(DshIcons.Add, "新建任务", onClick = {}) },
+            actions = { DshIBtn(DshIcons.Add, "新建任务", onClick = onNewTask) },
         )
 
         if (tasks.isEmpty()) {
@@ -500,7 +613,7 @@ fun S13Automation(
             ) {
                 DshEmpty("还没有自动化任务", icon = DshIcons.Schedule)
                 Spacer(Modifier.height(16.dp))
-                DshBtn("新建第一个任务", icon = DshIcons.Add, onClick = {})
+                DshBtn("新建第一个任务", icon = DshIcons.Add, onClick = onNewTask)
             }
             return@DshScreen
         }
@@ -656,6 +769,166 @@ private fun TaskCard(
             DshChip("轨迹", icon = DshIcons.Timeline, mini = true)
             Spacer(Modifier.weight(1f))
             DshChip("日志", mini = true)
+        }
+    }
+}
+
+/**
+ * v22 修订版：S11「空工作区」卡。
+ *
+ * 设计稿原文（虚线边框 r12，居中排布）：
+ * ```html
+ * <div style="text-align:center;padding:20px 16px;margin-top:12px;
+ *             border:1px dashed var(--line);border-radius:12px">
+ *   <i class="material-icons" style="font-size:32px;color:var(--ink3);opacity:.5">folder_open</i>
+ *   <div style="font-size:13px;font-weight:600;color:var(--ink2);margin-top:8px">空工作区</div>
+ *   <div style="font-size:11.5px;color:var(--ink3);margin-top:4px;line-height:1.5">
+ *     还没有任何文件，上传或新建后<br>Agent 才能在工作区内读写</div>
+ *   <div style="display:flex;gap:7px;justify-content:center;margin-top:12px">
+ *     <div class="btn sm">上传文件</div><div class="btn sm ghost">新建</div>
+ *   </div>
+ * </div>
+ * ```
+ *
+ * 两个按钮都接**真实可达**的落地：[onUpload] 走 SAF 目录选择（S41/S50 那条链），
+ * [onNew] 由调用方决定（本 App 没有"在工作区里新建文件"的写入口，
+ * 所以调用方不给回调时这个按钮置灰并说明，不画成能点却没反应）。
+ */
+@Composable
+private fun S11EmptyWorkspace(
+    onUpload: () -> Unit,
+    onNew: (() -> Unit)?,
+) {
+    val c = DshTheme.colors
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(c.card)
+            .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+            .padding(horizontal = 16.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            DshIcons.FolderOpen, null,
+            Modifier.size(32.dp),
+            tint = c.ink3.copy(alpha = 0.5f),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "空工作区",
+            style = Type.sec.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+            color = c.ink2,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "还没有任何文件，上传或新建后\nAgent 才能在工作区内读写",
+            style = Type.meta.copy(fontSize = 11.5.sp, lineHeight = 17.3.sp),
+            color = c.ink3,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            DshBtn(
+                "上传文件",
+                icon = DshIcons.Upload,
+                small = true,
+                onClick = onUpload,
+            )
+            DshBtn(
+                "新建",
+                icon = DshIcons.NoteAdd,
+                small = true,
+                tone = BtnTone.Ghost,
+                enabled = onNew != null,
+                onClick = { onNew?.invoke() },
+            )
+        }
+    }
+}
+
+/**
+ * v22 修订版：S11 骨架屏加载态。
+ *
+ * 设计稿把它画成一个"示例卡"（标题「骨架屏加载态」+ 三行 pulse 占位）。
+ * 实现为真实的 loading 组件：safOn 已授权但 [SafTree.list] 还在后台跑时显示，
+ * 用 `rememberInfiniteTransition` 做 0.4↔0.8 的透明度呼吸（1.5s，与设计稿
+ * `@keyframes pulse` 一致，第二/三行带 0.2s / 0.1s 延迟错开）。
+ *
+ * ⚠️ 设计稿外层那个「骨架屏加载态」说明文字**不实现** —— 那是给看稿人解释
+ * 这是什么，不是产品内容；真机上出现一行"骨架屏加载态"反而莫名其妙。
+ */
+@Composable
+private fun S11Skeleton() {
+    val c = DshTheme.colors
+    val tr = rememberInfiniteTransition(label = "skeleton")
+    // ⚠️ 不能包成局部 fun —— animateFloat 是 @Composable，非 composable 函数里调不了。
+    // 三个占位行的呼吸相位各自独立（延迟 0 / 100 / 200ms，与设计稿 animation-delay 一致）。
+    val a0 by tr.animateFloat(
+        initialValue = 0.4f, targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(750, delayMillis = 0, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "p0",
+    )
+    val a1 by tr.animateFloat(
+        initialValue = 0.4f, targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(750, delayMillis = 100, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "p1",
+    )
+    val a2 by tr.animateFloat(
+        initialValue = 0.4f, targetValue = 0.8f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(750, delayMillis = 200, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "p2",
+    )
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.xl))
+            .background(c.card)
+            .border(1.dp, c.line, RoundedCornerShape(Radius.xl))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        listOf(a0 to 60, a1 to 50, a2 to 55).forEach { (a, wPct) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(c.line2.copy(alpha = a)),
+                )
+                Column(
+                    Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(wPct / 100f)
+                            .height(11.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(c.line2.copy(alpha = a)),
+                    )
+                    Box(
+                        Modifier
+                            .fillMaxWidth((wPct - 20) / 100f)
+                            .height(9.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(c.line2.copy(alpha = a)),
+                    )
+                }
+            }
         }
     }
 }
