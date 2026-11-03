@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- r164：深色 + API 23+。浅色版见 values-v23；深色必须把
+         windowLightStatusBar 关掉（深底浅图标），否则状态栏图标不可见。 -->
+    <style name="Theme.DshSplash" parent="Theme.TermuxApp.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/dsh_boot_bg</item>
+        <item name="android:statusBarColor">@color/dsh_boot_bg</item>
+        <item name="android:navigationBarColor">@color/dsh_boot_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

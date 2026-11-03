@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- r164：深色 + Android 12+。浅色版见 values-v31；深色关掉 light status bar。 -->
+    <style name="Theme.DshSplash" parent="Theme.TermuxApp.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/dsh_boot_bg</item>
+        <item name="android:statusBarColor">@color/dsh_boot_bg</item>
+        <item name="android:navigationBarColor">@color/dsh_boot_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowSplashScreenBackground">@color/dsh_boot_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

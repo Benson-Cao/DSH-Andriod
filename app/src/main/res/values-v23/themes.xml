@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- r163 方案 C：API 23+ 才有 windowLightStatusBar。
-         浅色底 → 状态栏深色图标；深色 night 变体不覆盖此项（默认白图标正合适）。 -->
-    <style name="Theme.DshSplash" parent="@style/Theme.DshSplash">
+    <!-- r164：API 23+ 覆盖定义。⚠️ 不能写 parent="@style/Theme.DshSplash"（自引用
+         会导致运行时主题解析失败 → 回退到 application 的 DarkActionBar → 顶部
+         出现黑底白字标题栏，用户 2026-11-03 实测）。正确模式：每个 qualifier 的
+         定义都**显式写完整 parent 链并携带全部 items**，彼此独立、无自引用。 -->
+    <style name="Theme.DshSplash" parent="Theme.TermuxApp.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/dsh_boot_bg</item>
+        <item name="android:statusBarColor">@color/dsh_boot_bg</item>
+        <item name="android:navigationBarColor">@color/dsh_boot_bg</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>
